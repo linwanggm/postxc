@@ -1,21 +1,27 @@
-#####################################################################################
-# author:waln Email: linwanggm@gmail.com
+########################################################################################################
+# author: waln Email: wangln@sina.cn
 # date: 03.04.2014
-# readme:use the script to test whether the data cluster installed is ok
-######################################################################################
+# readme: create table on every coordinator, then isert insertNum rows
+#  ;select all tables on every datanode and standy,at last drop the tables
+#  if the cluster hasnot standby, please comment the statement:
+#   "checkNodeSelect(pt_standby,'standby',insertNum)"
+########################################################################################################
 
 #!/usr/bin/evn python
 import os, sys, getpass
 
 global checkOK
-#pt_coordinator: first is coordinator ip, second is port.....
+#### there are some parameters that may need modify as below
 pt_coordinator = ['192.168.17.130','5700',  '192.168.17.130','5702', '192.168.17.130','5704']
-#pt_datanode: first is datanode ip, second is port
 pt_datanode = ['192.168.17.130','5706',  '192.168.17.130','5708', '192.168.17.130','5710']
+pt_standby = ['192.168.17.130','5706',  '192.168.17.130','5708', '192.168.17.130','5710']
 nodeNum = len(pt_coordinator)/2 + len(pt_datanode)/2
-#path:given  the path of psql, but you can set path=''
-path='/home/wln/pgxc/install/bin'
 user = getpass.getuser()
+## path: given the psql path, you can write "path=''" that use the path of psql 'which psql'
+path='/home/wln/pgxc/install/bin'
+##how many rows insert into tables
+insertNum=10
+
 
 ##
 # function checkPgxcNode(): check the number of nodes on coordinators is right
@@ -38,7 +44,7 @@ def checkPgxcNode():
         if int(returnOut[2]) != nodeNum:
             print pt_coordinator[2*i] + ' : pgxc_node isn\'t right'
             return
-        i = i + 1 
+        i = i + 1
     print '-' *5 + ' pgxc_node check ok. ' + '-' * 5 + '\n'
     checkOK = True
 
@@ -120,7 +126,7 @@ def checkNodeSelect(nodeList,nodeName,value):
             file = os.popen(cmd)
             returnOut = file.read().split('\n')
             if len(returnOut) < 2 or int(returnOut[2]) != value:
-                print pt_datanode[2*i] + ' : ' + nodeList + ' select Error!'
+                print pt_datanode[2*nodei] + ' : ' + nodeList + ' select Error!'
                 return
             tbj = tbj + 1
         nodei = nodei + 1
@@ -153,7 +159,7 @@ def checkInsert(value):
         i = i + 1
     print '-' *5 + ' insert ok. ' + '-' * 5 + '\n'
     checkOK = True
-    
+
 ##
 # function noCheckDropTable()
 ##
@@ -185,19 +191,13 @@ if __name__ == '__main__':
     cnNum = len(pt_coordinator)
     dnNum = len(pt_datanode)
     if cnNum%2 == 1 or dnNum %2 == 1:
-        print 'alter,node list is wrong.' 
+        print 'alter,node list is wrong.'
         exit(1)
-	# check pgxc_node on all coordinators are all ok
     checkPgxcNode()
-	# check create table 
     checkCreateTable()
-	#checkInsert(value): value stands for how many rows insert into tables
-    checkInsert(100)
-	#checkNodeSelect(pt_list,the kind of node,how many rows that insert into table)
-    checkNodeSelect(pt_coordinator,'coordinator',100)
-    checkNodeSelect(pt_datanode,'datanode',100)
-	#check drop table on coordinator
-    checkDropTable()  
-	#when the cluster install ok, the function noCheckDropTable no need execute,
-	# if cluster install not ok, the function noCheckDropTable will execute
-    noCheckDropTable() 
+    checkInsert(insertNum)
+    checkNodeSelect(pt_coordinator,'coordinator',insertNum)
+    checkNodeSelect(pt_datanode,'datanode',insertNum)
+    checkNodeSelect(pt_standby,'standby',insertNum)
+    checkDropTable()
+    noCheckDropTable()
