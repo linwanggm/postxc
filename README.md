@@ -1,4 +1,4 @@
-pgxc
+pg-xc
 ====
 
-the repository for pgxc
+the repository for pg-xc
