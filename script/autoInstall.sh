@@ -1,5 +1,5 @@
 ###################################################################################################################
-# author: waln, Emaile:linwanggm@gmail.com
+# author: wangln, E-mail:linwanggm@gmail.com
 # date  : 2014.02.24 
 # modify: 
 # everyone can use and alter this script by freedom for private purpose.
@@ -15,11 +15,11 @@
 #!/bin/bash
 installPath=/home/wln/pgxc/install_1_1
 dataPath=/home/wln/pgxc/data
-pgxcPortBase=5300
-coordinatorNum=1
+pgxcPortBase=5700
+coordinatorNum=2
 datanodeNum=2
-pgxcIp=localhost
-gtmIp=localhost
+pgxcIp=127.0.0.1
+gtmIp=127.0.0.1
 #gtmPort=5310
 gtmPort=`expr $pgxcPortBase + $coordinatorNum \* 2 + $datanodeNum \* 2 + 2`
 #startNumCN to make datanode,the num from different num.etc if startNumCN=2,you will get coordinator2,coordinator3,...
@@ -39,7 +39,7 @@ function modify_parameter()
     sed -i "/^#listen_addresses/c\listen_addresses = '*'"                          $path/postgresql.conf > /dev/null
     sed -i "/^#port = 5432/c\port = $port"                                         $path/postgresql.conf > /dev/null
     sed -i "/^#pooler_port =/c\pooler_port = `expr $port + 1`"                     $path/postgresql.conf > /dev/null
-    sed -i "/^#gtm_host =/c\gtm_host = $gtmIp"                                     $path/postgresql.conf > /dev/null
+    sed -i "/^#gtm_host =/c\gtm_host = '$gtmIp'"                                     $path/postgresql.conf > /dev/null
     sed -i "/^#gtm_port =/c\gtm_port = $gtmPort"                                   $path/postgresql.conf > /dev/null
 
     sed -i "/^#log_destination =/c\log_destination = 'stderr'"                     $path/postgresql.conf > /dev/null
@@ -49,15 +49,16 @@ function modify_parameter()
     sed -i "/#log_line_prefix =/c\log_line_prefix = '%m %c %d %p %a %x %e'"        $path/postgresql.conf > /dev/null
     sed -i "/#log_min_messages =/c\log_min_messages = debug1"                      $path/postgresql.conf > /dev/null
 
-    echo "host all all 0.0.0.0/0 trust" >> $path/pg_hba.conf
+    echo "host all all "$pgxcIp"/32 trust" >> $path/pg_hba.conf
 }
+
 
 ##
 # function install(): install datanode,coordinator,gtm
 ##
 function installcndn()
 {
-    i=$startNumCN
+        i=$startNumCN
 	coordinatorPort=$pgxcPortBase
 	#install coordinator
 	while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
@@ -84,6 +85,7 @@ function installcndn()
 	done
 }
 
+
 ##
 #function installgtm(): install gtm
 ##
@@ -92,7 +94,7 @@ function installgtm()
 	#install gtm
 	$installPath/bin/initgtm -D $dataPath/gtm -Z gtm
 	sed -i "/^#listen_addresses/c\listen_addresses = '*'"         $dataPath/gtm/gtm.conf > /dev/null
-    sed -i "/^port = 6666/c\port = $gtmPort"                      $dataPath/gtm/gtm.conf > /dev/null
+        sed -i "/^port = 6666/c\port = $gtmPort"                      $dataPath/gtm/gtm.conf > /dev/null
 	sed -i "/log_file/c\log_file = 'gtm.log'"                     $dataPath/gtm/gtm.conf > /dev/null
 	sed -i "/log_min_messages/c\log_min_messages = WARNING"       $dataPath/gtm/gtm.conf > /dev/null
 }
@@ -111,7 +113,7 @@ function stop()
 		i=`expr $i + 1`
 	done
 	
-    i=$startNumCN
+        i=$startNumCN
 	#stop coordinator
 	while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
@@ -139,7 +141,7 @@ function showstop()
 	done
 	echo ""
 
-    i=$startNumCN
+        i=$startNumCN
 	#stop coordinator
 	echo "########### stop coordinator ###########"
 	while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
@@ -152,7 +154,7 @@ function showstop()
 	#stop gtm
 	echo "########### stop gtm ###########"
 	echo "$installPath/bin/gtm_ctl stop -D $dataPath/gtm -Z gtm -m fast -l logfile" 
-    echo ""
+        echo ""
 }
 
 ##
@@ -165,15 +167,15 @@ function start()
 	while [ $i -lt `expr $datanodeNum + $startNumDN` ]
 	do
 	    $installPath/bin/pg_ctl start -D $dataPath/datanode$i -Z datanode  -l logfile > /dev/null 2>&1
-		i=`expr $i + 1`
+	    i=`expr $i + 1`
 	done
 	
-    i=$startNumCN
+        i=$startNumCN
 	#start coordinator
 	while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
 	    $installPath/bin/pg_ctl start -D $dataPath/coordinator$i -Z coordinator -l logfile  > /dev/null 2>&1
-		i=`expr $i + 1`
+	    i=`expr $i + 1`
 	done
 
 	#start gtm
@@ -185,24 +187,24 @@ function start()
 ##
 function showstart()
 {	
-    echo ""
+        echo ""
 	i=$startNumDN
 	#start datanode
 	echo "########### start datanode ###########"
 	while [ $i -lt `expr $datanodeNum + $startNumDN` ]
 	do
 	    echo "$installPath/bin/pg_ctl start -D $dataPath/datanode$i -Z datanode -l logfile"
-		i=`expr $i + 1`
+	    i=`expr $i + 1`
 	done
 	echo ""
 	
-    i=$startNumCN
+        i=$startNumCN
 	echo "########### start coordinator ###########"
 	#start coordinator
 	while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
 	    echo "$installPath/bin/pg_ctl start -D $dataPath/coordinator$i -Z coordinator -l logfile"
-		i=`expr $i + 1`
+	    i=`expr $i + 1`
 	done
 	echo ""
 	
@@ -217,22 +219,22 @@ function showstart()
 ##
 function cleandb()
 {
-    #stop datanode,coordinator,gtm
+        #stop datanode,coordinator,gtm
 	stop
 	i=$startNumDN
 	#clean datanode
 	while [ $i -lt `expr $datanodeNum + $startNumDN` ]
 	do
-		rm -rf $dataPath/datanode$i
-		i=`expr $i + 1`
+	    rm -rf $dataPath/datanode$i
+	    i=`expr $i + 1`
 	done
 	
-    i=$startNumCN
+        i=$startNumCN
 	#clean coordinator
 	while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
-		rm -rf $dataPath/coordinator$i
-		i=`expr $i + 1`
+	    rm -rf $dataPath/coordinator$i
+	    i=`expr $i + 1`
 	done
 	
 
@@ -249,25 +251,25 @@ function regist()
     sleep 3
     #get the string of regist datanode
     i=$startNumDN
-	datanodePortBase=`expr $pgxcPortBase + $coordinatorNum \* 2`
-	datanodePort=$datanodePortBase
-	registDatanodeString=""
+    datanodePortBase=`expr $pgxcPortBase + $coordinatorNum \* 2`
+    datanodePort=$datanodePortBase
+    registDatanodeString=""
     while [ $i -lt `expr $datanodeNum + $startNumDN` ]
 	do
-		registDatanodeString=$registDatanodeString"create node datanode$i with(type=datanode,host=$pgxcIp,port=$datanodePort);"
-		i=`expr $i + 1`
-		datanodePort=`expr $datanodePort + 2`
+	    registDatanodeString=$registDatanodeString"create node datanode$i with(type=datanode,host='$pgxcIp',port=$datanodePort);"
+	    i=`expr $i + 1`
+	    datanodePort=`expr $datanodePort + 2`
 	done
 	
-	#get the string of regist coordinator
-	i=$startNumCN
-	coordinatorPort=$pgxcPortBase
-	registCoordinatorString=""
+    #get the string of regist coordinator
+    i=$startNumCN
+    coordinatorPort=$pgxcPortBase
+    registCoordinatorString=""
     while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
-		registCoordinatorString=$registCoordinatorString"create node coordinator$i with(type=coordinator,host=$pgxcIp,port=$coordinatorPort);"
-		i=`expr $i + 1`
-		coordinatorPort=`expr $coordinatorPort + 2`
+	    registCoordinatorString=$registCoordinatorString"create node coordinator$i with(type=coordinator,host='$pgxcIp',port=$coordinatorPort);"
+	    i=`expr $i + 1`
+	    coordinatorPort=`expr $coordinatorPort + 2`
 	done	
 	
 	registString=$registDatanodeString$registCoordinatorString"select pgxc_pool_reload();"
@@ -275,10 +277,10 @@ function regist()
 	coordinatorPort=$pgxcPortBase
     while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
-        echo $registString
-		$installPath/bin/psql -d postgres -p $coordinatorPort -c "delete from pgxc_node;$registString"            
-		i=`expr $i + 1`
-		coordinatorPort=`expr $coordinatorPort + 2`
+            echo $registString
+	    $installPath/bin/psql -d postgres -p $coordinatorPort -c "delete from pgxc_node;$registString"            
+	    i=`expr $i + 1`
+	    coordinatorPort=`expr $coordinatorPort + 2`
 	done
 }
 
@@ -287,35 +289,35 @@ function regist()
 ##
 function showregist()
 {
-	echo ""
+    echo ""
     #get the string of regist datanode
     i=$startNumDN
-	datanodePortBase=`expr $pgxcPortBase + $coordinatorNum \* 2`
-	datanodePort=$datanodePortBase
-	echo "########### regist datanode ###########"
+    datanodePortBase=`expr $pgxcPortBase + $coordinatorNum \* 2`
+    datanodePort=$datanodePortBase
+    echo "########### regist datanode ###########"
     while [ $i -lt `expr $datanodeNum + $startNumDN` ]
-	do
-		echo "create node datanode$i with(type=datanode,host=$pgxcIp,port=$datanodePort);"
-		i=`expr $i + 1`
-		datanodePort=`expr $datanodePort + 2`
+       do
+	    echo "create node datanode$i with(type=datanode,host='$pgxcIp',port=$datanodePort);"
+	    i=`expr $i + 1`
+	    datanodePort=`expr $datanodePort + 2`
 	done
-    echo ""
-	
-	#get the string of regist coordinator
-	i=$startNumCN
-	coordinatorPort=$pgxcPortBase
-	echo "########### regist coordinator ###########"
+
+    echo ""	
+    #get the string of regist coordinator
+    i=$startNumCN
+    coordinatorPort=$pgxcPortBase
+    echo "########### regist coordinator ###########"
     while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
-		echo "create node coordinator$i with(type=coordinator,host=$pgxcIp,port=$coordinatorPort);"
-		i=`expr $i + 1`
-		coordinatorPort=`expr $coordinatorPort + 2`
-	done	
-    echo ""
+	    echo "create node coordinator$i with(type=coordinator,host='$pgxcIp',port=$coordinatorPort);"
+	    i=`expr $i + 1`
+	    coordinatorPort=`expr $coordinatorPort + 2`
+	done
 	
-	echo "########### reload the regist infomation ###########"
-	echo "select pgxc_node_reload();"
-	echo ""
+    echo ""
+    echo "########### reload the regist infomation ###########"
+    echo "select pgxc_node_reload();"
+    echo ""
 
 }
 
@@ -333,31 +335,31 @@ function killnode()
     #kill datanode
     i=$startNumDN	
     datanodePortBase=`expr $pgxcPortBase + $coordinatorNum \* 2`
-	datanodePort=$datanodePortBase
+     datanodePort=$datanodePortBase
     while [ $i -lt `expr $datanodeNum + $startNumDN` ]
 	do
-		ps ux | grep datanode$i | awk '{print $2}' | xargs kill -9  > /dev/null 2>&1
-		rm -rf $dataPath/datanode$i/postmaster.pid
-		rm -rf /tmp/.s.PGSQL.$datanodePort*
-		i=`expr $i + 1`
-		datanodePort=`expr $datanodePort + 2`
+	    ps ux | grep datanode$i | awk '{print $2}' | xargs kill -9  > /dev/null 2>&1
+	    rm -rf $dataPath/datanode$i/postmaster.pid
+	    rm -rf /tmp/.s.PGSQL.$datanodePort*
+	    i=`expr $i + 1`
+	    datanodePort=`expr $datanodePort + 2`
 	done
 	
     #kill coordinator
-	coordinatorPort=$pgxcPortBase
+    coordinatorPort=$pgxcPortBase
     i=$startNumCN	
     while [ $i -lt `expr $coordinatorNum + $startNumCN` ]
 	do
-		ps ux | grep coordinator$i | awk '{print $2}' | xargs kill -9  > /dev/null  2>&1
-		rm -rf $dataPath/coordinator$i/postmaster.pid
+	    ps ux | grep coordinator$i | awk '{print $2}' | xargs kill -9  > /dev/null  2>&1
+	    rm -rf $dataPath/coordinator$i/postmaster.pid
 	    rm -rf /tmp/.s.PGSQL.$coordinatorPort*
-		rm -rf /tmp/.s.PGPOOL.`expr $coordinatorPort + 1`*
-		i=`expr $i + 1`
-		coordinatorPort=`expr $coordinatorPort + 2`
+	    rm -rf /tmp/.s.PGPOOL.`expr $coordinatorPort + 1`*
+	    i=`expr $i + 1`
+	    coordinatorPort=`expr $coordinatorPort + 2`
 	done	
 
-	#kill gtm
-	ps ux | grep gtm | awk '{print $2}' | xargs kill -9  > /dev/null 2>&1 
+    #kill gtm
+    ps ux | grep gtm | awk '{print $2}' | xargs kill -9  > /dev/null 2>&1 
     rm -rf $dataPath/gtm/gtm.pid	
 }
 
@@ -385,11 +387,32 @@ function showuse()
     echo "  -showregist     --show how to regist datanode, coordinator on coordinator"
 }
 
-if [ $1 == "-all" ] ; then 
+##
+#function addEnvParameters(): add enviromental parameters
+##
+function addEnvParameters()
+{
+   sed -i "/PGPATH/d"            ~/.bashrc
+   sed -i '/PGDATABASE=/d'        ~/.bashrc
+   sed -i '/PGPORT=/d'            ~/.bashrc
+   echo 'export PGDATABASE=postgres'   >>  ~/.bashrc
+   echo 'export PGPORT='$pgxcPortBase  >>  ~/.bashrc
+   echo 'export PGPATH='$installPath      >> ~/.bashrc
+   echo 'export PATH=$PGPATH/bin:$PATH'   >> ~/.bashrc
+   echo 'export LD_LIBRARY_PATH=$PGPATH/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+   source ~/.bashrc		
+
+}
+
+if [ $# -lt 1 ] ; then
+    showuse
+    exit
+elif [ $1 == "-all" ] ; then 
+    addEnvParameters
     installcndn
-	installgtm
-	start
-	regist
+    installgtm
+    start
+    regist
 elif [ $1 == "-cleandb" ] ; then 
     cleandb
 elif [ $1 == "-start" ] ; then 
@@ -409,3 +432,4 @@ elif [ $1 == "-showregist" ] ; then
 else
     showuse
 fi
+
