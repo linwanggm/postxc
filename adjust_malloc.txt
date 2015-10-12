@@ -1,0 +1,349 @@
+
+1.PgSQL · 捉虫动态 · 执行大SQL语句提示无效的内存申请大小
+ http://mysql.taobao.org/monthly/2015/08/04/
+
+2. 源码调试
+（1）测试准备
+数据库版本psql (PostgreSQL) 9.4rc1
+
+------t1.sh 脚本，为27会生成256MB文件，内容insert into byteatale values(1,'aa...');的形式。
+---start
+#!/bin/bash
+data='a'
+for ((i=1;i<=27;i++));
+do
+data=$data$data
+done
+echo 'build ok'
+
+#echo "insert into byteatable values(1,'"$data"');" > data20.txt
+echo -n "insert into byteatable values(1,'" > data20.txt
+echo -n $data >>data20.txt
+echo -n $data >> data20.txt
+echo -n "');" >> data20.txt
+
+echo 'data20.txt done'
+psql  -d postgres -c "
+insert into byteatable(id,obj) values (1,'"$data"');
+"
+#echo 'OK'
+-------end
+现在将最大内存申请改为251MB，但是执行报错信息却不一样。
+
+wln@iZ232ngsvp8Z:~/pg94$ psql -f data20.txt_129M
+psql:data20.txt_129M:1: ERROR:  invalid memory alloc request size 268435456
+对应日志：
+addlit: 2048
+addlit: 4096
+addlit: 8192
+addlit: 16384
+addlit: 32768
+addlit: 65536
+addlit: 131072
+addlit: 262144
+addlit: 524288
+addlit: 1048576
+addlit: 2097152
+addlit: 4194304
+addlit: 8388608
+addlit: 16777216
+addlit: 33554432
+addlit: 67108864
+addlit: 134217728
+addlit: 268435456
+ERROR:  invalid memory alloc request size 268435456
+STATEMENT:  insert into byteatable values(1,'aaaaaaaaaaaaaaaaaa........
+..
+
+wln@iZ232ngsvp8Z:~/pg94$ psql -f data20.txt_257M
+psql:data20.txt_257M:1: ERROR:  out of memory
+DETAIL:  Cannot enlarge string buffer containing 0 bytes by 268435493 more bytes. （:: 来自文件./src/backend/lib/stringinfo.c）
+对应日志：
+addlit: 2048
+addlit: 4096
+addlit: 8192
+addlit: 16384
+addlit: 32768
+addlit: 65536
+addlit: 131072
+addlit: 262144
+addlit: 524288
+addlit: 1048576
+addlit: 2097152
+addlit: 4194304
+addlit: 8388608
+addlit: 16777216
+addlit: 33554432
+addlit: 67108864
+addlit: 134217728
+addlit: 268435456
+ERROR:  out of memory
+DETAIL:  Cannot enlarge string buffer containing 0 bytes by 268435493 more bytes.
+
+为什么会输出addlit信息？因为修改了代码src/backend/parse/scan.c中函数addlit；
+可见数据库从2k开始申请，每次加倍。这样也就出现了一个潜在的问题，比如申请1.1G内存，实际需要可能申请2G。
+因为设置了最大内存为251MB，上述两者对应128MB文件，需要内存为256MB（对应着addlit: 268435456），但是限制了最大
+#define MaxAllocSize    ((Size) 0xfa00000)  #对应251MB  故报错。
+为什么对文件257MB报错，因为超过了申请最大范围，所以报cannot enlarge.
+感觉两者报错信息不通在于：1个是实际需求的内存在规定范围内（虽然数据库申请的超过了限制）；而另一个实际需求的已经超过限制。
+
+最大内存限制在如下文件中修改 #define MaxAllocSize    ((Size) 0xfa00000)  #对应251MB ：
+wln@iZ232ngsvp8Z:~/pg94/postgresql-9.4rc1$ vi ./src/include/utils/memutils.h 
+wln@iZ232ngsvp8Z:~/pg94/postgresql-9.4rc1$ vi ./src/common/psprintf.c
+（修改这些文件需要重新configure，make,make install）
+日志中打印的信息见src/backend/parser/scan.c ：
+static void
+addlit(char *ytext, int yleng, core_yyscan_t yyscanner)
+{
+        /* enlarge buffer if needed */
+        if ((yyextra->literallen + yleng) >= yyextra->literalalloc)
+        {
+                do {
+                        yyextra->literalalloc *= 2;
+                              printf("addlit: %d\n",yyextra->literalalloc );
+                } while ((yyextra->literallen + yleng) >= yyextra->literalalloc);
+                yyextra->literalbuf = (char *) repalloc(yyextra->literalbuf,
+                                                                                                yyextra->literalalloc);
+        }
+        /* append new data */
+        memcpy(yyextra->literalbuf + yyextra->literallen, ytext, yleng);
+        yyextra->literallen += yleng;
+}
+
+static void
+addlitchar(unsigned char ychar, core_yyscan_t yyscanner)
+{
+        /* enlarge buffer if needed */
+        if ((yyextra->literallen + 1) >= yyextra->literalalloc)
+        {
+                yyextra->literalalloc *= 2;
+                printf("addlitchar: %d\n",yyextra->literalalloc);
+                yyextra->literalbuf = (char *) repalloc(yyextra->literalbuf,
+                                                                                                yyextra->literalalloc);
+        }
+        /* append new data */
+        yyextra->literalbuf[yyextra->literallen] = ychar;
+        yyextra->literallen += 1;
+}
+
+
+
+另外，在执行129MB文件时（psql -f data20.txt_129M ），通过free -m 跟踪内存变化，如下，可以看出申请了256MB内存，实际内存变化为1200MB左右。
+             total       used       free     shared    buffers     cached
+Mem:          2000        650       1349         14          4        542
+-/+ buffers/cache:        103       1896
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1038        961         14          4        544
+-/+ buffers/cache:        490       1510
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1770        229         14          4        544
+-/+ buffers/cache:       1221        778
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1926         73         14          4        532
+-/+ buffers/cache:       1390        610
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000        643       1356         16          4        535
+-/+ buffers/cache:        103       1896
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000        643       1356         16          4        535
+-/+ buffers/cache:        104       1896
+
+wln@iZ232ngsvp8Z:~/pg94$ cat wh.sh
+#!/bin/bash
+while :
+do
+  free -m;
+  sleep 1
+done
+
+而这样在执行psql -f data20.txt_257M  会被kill 掉（aliyun ECS， 内存2G）
+wln@iZ232ngsvp8Z:~/pg94$ psql -f data20.txt_257M 
+             total       used       free     shared    buffers     cached
+Mem:          2000        666       1334         11          1        557
+-/+ buffers/cache:        107       1893
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000        723       1276         11          1        585
+-/+ buffers/cache:        136       1863
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000        878       1121         11          1        662
+-/+ buffers/cache:        214       1785
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1036        963         11          1        741
+-/+ buffers/cache:        293       1707
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1461        539         11          1        813
+-/+ buffers/cache:        646       1354
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1693        306         11          1        813
+-/+ buffers/cache:        878       1122
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000       1924         76         11          0         33
+-/+ buffers/cache:       1890        109
+Swap:            0          0          0
+             total       used       free     shared    buffers     cached
+Mem:          2000        418       1582         11          0         23
+-/+ buffers/cache:        394       1605
+Swap:            0          0          0
+
+Killed
+打印日志内容（这个最大内存申请仍为1G情况下的日志）：
+addlit: 2048
+addlit: 4096
+addlit: 8192
+addlit: 16384
+addlit: 32768
+addlit: 65536
+addlit: 131072
+addlit: 262144
+addlit: 524288
+addlit: 1048576
+addlit: 2097152
+addlit: 4194304
+addlit: 8388608
+addlit: 16777216
+addlit: 33554432
+addlit: 67108864
+addlit: 134217728
+addlit: 268435456
+TopMemoryContext: 69936 total in 10 blocks; 6184 free (13 chunks); 63752 used
+  TopTransactionContext: 8192 total in 1 blocks; 7440 free (0 chunks); 752 used
+  MessageContext: 536879152 total in 2 blocks; 7888 free (2 chunks); 536871264 used
+  Operator class cache: 8192 total in 1 blocks; 1680 free (0 chunks); 6512 used
+  smgr relation table: 24576 total in 2 blocks; 13920 free (4 chunks); 10656 used
+  TransactionAbortContext: 32768 total in 1 blocks; 32736 free (0 chunks); 32 used
+  Portal hash: 8192 total in 1 blocks; 1680 free (0 chunks); 6512 used
+  PortalMemory: 0 total in 0 blocks; 0 free (0 chunks); 0 used
+  Relcache by OID: 24576 total in 2 blocks; 13872 free (3 chunks); 10704 used
+  CacheMemoryContext: 516096 total in 6 blocks; 212080 free (2 chunks); 304016 used
+    pg_db_role_setting_databaseid_rol_index: 1024 total in 1 blocks; 64 free (0 chunks); 960 used
+    pg_opclass_am_name_nsp_index: 3072 total in 2 blocks; 1784 free (2 chunks); 1288 used
+    pg_foreign_data_wrapper_name_index: 1024 total in 1 blocks; 200 free (0 chunks); 824 used
+    pg_enum_oid_index: 1024 total in 1 blocks; 200 free (0 chunks); 824 used
+...
+    pg_database_datname_index: 1024 total in 1 blocks; 152 free (0 chunks); 872 used
+    pg_auth_members_role_member_index: 1024 total in 1 blocks; 64 free (0 chunks); 960 used
+    pg_database_oid_index: 1024 total in 1 blocks; 152 free (0 chunks); 872 used
+    pg_authid_rolname_index: 1024 total in 1 blocks; 152 free (0 chunks); 872 used
+  MdSmgr: 8192 total in 1 blocks; 8128 free (0 chunks); 64 used
+  ident parser context: 0 total in 0 blocks; 0 free (0 chunks); 0 used
+  hba parser context: 3072 total in 2 blocks; 80 free (1 chunks); 2992 used
+  LOCALLOCK hash: 8192 total in 1 blocks; 1680 free (0 chunks); 6512 used
+  Timezones: 83472 total in 2 blocks; 3744 free (0 chunks); 79728 used
+  ErrorContext: 33562672 total in 2 blocks; 8048 free (2 chunks); 33554624 used
+ERROR:  out of memory
+DETAIL:  Failed on request of size 67108864.
+
+
+---
+如果1个sql语句260MB，则如上日志文件本来是超过10MB就会生成一个新文件，但是这个不会，出现问题。
+
+wln@iZ232ngsvp8Z:~/pg94/data/pg_log$ du -sh *
+257M    postgresql-2015-08-23_144009.log
+257M    postgresql-2015-08-23_144025.log
+257M    postgresql-2015-08-23_144029.log
+257M    postgresql-2015-08-23_144149.log
+4.0K    postgresql-2015-08-23_144153.log
+
+
+-------
+每次内存申请都2倍的申请，这样可能会造成大量内存被浪费。
+修改如下：
+
+
+vi src/backend/parser/scan.c
+修改如下：
+
+
+----------
+scan.l
+修改如下(l文件用tab键空格)：
+
+static void
+addlit(char *ytext, int yleng, core_yyscan_t yyscanner)
+{
+        /* enlarge buffer if needed */
+        if ((yyextra->literallen + yleng) >= yyextra->literalalloc)
+        {
+                do {
+                        yyextra->literalalloc *= 2;
+                } while ((yyextra->literallen + yleng) >= yyextra->literalalloc);
+                if (yyextra->literalalloc > MaxAllocSize && (yyextra->literallen + yleng) < MaxAllocSize)
+                yyextra->literalalloc = MaxAllocSize;
+                printf("addlit: %d\n",yyextra->literalalloc );
+                yyextra->literalbuf = (char *) repalloc(yyextra->literalbuf,
+                                                                                                yyextra->literalalloc);
+        }
+        /* append new data */
+        memcpy(yyextra->literalbuf + yyextra->literallen, ytext, yleng);
+        yyextra->literallen += yleng;
+}
+
+
+static void
+addlitchar(unsigned char ychar, core_yyscan_t yyscanner)
+{
+        /* enlarge buffer if needed */
+        if ((yyextra->literallen + 1) >= yyextra->literalalloc)
+        {
+                yyextra->literalalloc *= 2;
+               if (yyextra->literalalloc > MaxAllocSize && (yyextra->literallen + 1) < MaxAllocSize)
+                yyextra->literalalloc = MaxAllocSize;
+                printf("addlit: %d\n",yyextra->literalalloc );
+                yyextra->literalbuf = (char *) repalloc(yyextra->literalbuf,
+                                                                                                yyextra->literalalloc);
+        }
+        /* append new data */
+        yyextra->literalbuf[yyextra->literallen] = ychar;
+        yyextra->literallen += 1;
+}
+
+-----------------------------------
+报错Cannot enlarge string buffer containing 0 bytes by 268435493 more bytes. 对应的函数：
+
+/*
+* enlargeStringInfo
+*
+* Make sure there is enough space for 'needed' more bytes
+* ('needed' does not include the terminating null).
+*
+* External callers usually need not concern themselves with this, since
+* all stringinfo.c routines do it automatically.  However, if a caller
+* knows that a StringInfo will eventually become X bytes large, it
+* can save some palloc overhead by enlarging the buffer before starting
+* to store data in it.
+*
+* NB: because we use repalloc() to enlarge the buffer, the string buffer
+* will remain allocated in the same memory context that was current when
+* initStringInfo was called, even if another context is now current.
+* This is the desired and indeed critical behavior!
+*/
+void
+enlargeStringInfo(StringInfo str, int needed)
+{
+        int                     newlen;
+
+        /*
+         * Guard against out-of-range "needed" values.  Without this, we can get
+         * an overflow or infinite loop in the following.
+         */
+        if (needed < 0)                         /* should not happen */
+                elog(ERROR, "invalid string enlargement request size: %d", needed);
+        if (((Size) needed) >= (MaxAllocSize - (Size) str->len))
+                ereport(ERROR,
+                                (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                                 errmsg("out of memory"),
+                                 errdetail("Cannot enlarge string buffer containing %d bytes by %d more bytes.",
+                                                   str->len, needed)));
+
+
