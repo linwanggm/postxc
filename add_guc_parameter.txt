@@ -1,0 +1,77 @@
+
+
+1. 根据maintenance_work_mem，添加一个参数maintenance_work_mem_wln，初始大小设置为20MB
+修改的地方为：
+（1）
+./src/backend/utils/misc/postgresql.conf.sample:128 添加
+maintenance_work_mem_wln = 20MB            # min 1MB
+（2）
+./src/backend/utils/init/globals.c:102: 添加
+int                    maintenance_work_mem_wln = 20480;
+（3）
+./install_all/include/server/miscadmin.h:228: 添加
+extern PGDLLIMPORT int maintenance_work_mem_wln;
+
+（4）./src/backend/utils/misc/guc.c  添加：
+         {
+                {"maintenance_work_mem_wln", PGC_USERSET, RESOURCES_MEM,
+                        gettext_noop("Sets the maximum memory to be used for maintenance operations."),
+                        gettext_noop("This includes operations such as VACUUM and CREATE INDEX."),
+                        GUC_UNIT_KB
+                },
+                &maintenance_work_mem_wln,
+                20480, 1024, MAX_KILOBYTES,        //数据库启动初值为20480KB即20MB
+                NULL, NULL, NULL
+        },
+
+
+2. 测试
+postgres=# show maintenance_work_mem_wln;
+maintenance_work_mem_wln
+--------------------------
+20MB
+(1 row)
+
+postgres=# \x
+Expanded display is on.
+postgres=# select * from pg_settings where name='maintenance_work_mem_wln';
+-[ RECORD 1 ]--------------------------------------------------------------
+name       | maintenance_work_mem_wln
+setting    | 20480
+unit       | kB
+category   | Resource Usage / Memory
+short_desc | Sets the maximum memory to be used for maintenance operations.
+extra_desc | This includes operations such as VACUUM and CREATE INDEX.
+context    | user
+vartype    | integer
+source     | default
+min_val    | 1024
+max_val    | 2147483647
+enumvals   |
+boot_val   | 20480
+reset_val  | 20480
+sourcefile |
+sourceline |
+
+postgres=# select * from pg_settings where name='maintenance_work_mem';
+-[ RECORD 1 ]--------------------------------------------------------------
+name       | maintenance_work_mem
+setting    | 65536
+unit       | kB
+category   | Resource Usage / Memory
+short_desc | Sets the maximum memory to be used for maintenance operations.
+extra_desc | This includes operations such as VACUUM and CREATE INDEX.
+context    | user
+vartype    | integer
+source     | default
+min_val    | 1024
+max_val    | 2147483647
+enumvals   |
+boot_val   | 65536
+reset_val  | 65536
+sourcefile |
+sourceline |
+
+postgres=# select 2147483647/1024/1024;
+-[ RECORD 1 ]--
+?column? | 2047
