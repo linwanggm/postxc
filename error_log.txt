@@ -1,0 +1,94 @@
+在执行pg过程中，经常看到可以指定日志级别，那么日志对应的源码到底是什么呢？能不能添加下简单测试下呢，操作过程如下：
+数据库 psql (9.4rc1)
+1.
+日志级别：
+#   debug5
+#   debug4
+#   debug3
+#   debug2
+#   debug1
+#   info
+#   notice
+#   warning
+#   error
+#   log
+#   fatal
+#   panic
+
+2.
+postgres=# \set VERBOSITY verbose
+postgres=# create table t1(id int);
+CREATE TABLE
+postgres=# create table t1(id int);
+ERROR:  relation "t1" already exists
+STATEMENT:  create table t1(id int);
+ERROR:  42P07: relation "t1" already exists
+LOCATION:  heap_create_with_catalog, heap.c:1055
+
+2. 到文件heap.c 1055 行看下代码：
+        /*
+         * This would fail later on anyway, if the relation already exists.  But
+         * by catching it here we can emit a nicer error message.
+         */
+        existing_relid = get_relname_relid(relname, relnamespace);
+        if (existing_relid != InvalidOid)
+                ereport(ERROR,
+                                (errcode(ERRCODE_DUPLICATE_TABLE),
+                                 errmsg("relation \"%s\" already exists", relname)));
+
+可以看出，对应函数即为ereport, 其定义为：
+#define ereport(elevel, rest)     \
+     ereport_domain(elevel, TEXTDOMAIN, rest)
+
+
+#define ereport_domain(elevel, domain, rest)     \
+     do { \
+          const int elevel_ = (elevel); \
+          if (errstart(elevel_, __FILE__, __LINE__, PG_FUNCNAME_MACRO, domain)) \
+               errfinish rest; \
+          if (elevel_ >= ERROR) \
+               pg_unreachable(); \
+     } while(0)
+#endif   /* HAVE__BUILTIN_CONSTANT_P */
+
+3. 在其下面添加代码，日志级别warning.
+        /*
+         * This would fail later on anyway, if the relation already exists.  But
+         * by catching it here we can emit a nicer error message.
+         */
+        existing_relid = get_relname_relid(relname, relnamespace);
+        if (existing_relid != InvalidOid)
+         {      ereport(WARNING,
+                                (errcode(ERRCODE_DUPLICATE_TABLE),
+                                 errmsg("relation \"%s\" already exists", relname)));
+                ereport(ERROR,(errcode(ERRCODE_DUPLICATE_TABLE),errmsg("log test.\n")));
+         }
+
+
+
+postgres=# \set VERBOSITY verbose
+postgres=# create table t1(id int);
+WARNING:  42P07: relation "t1" already exists
+LOCATION:  heap_create_with_catalog, heap.c:1055
+ERROR:  42P07: log test.
+
+LOCATION:  heap_create_with_catalog, heap.c:1056
+
+
+日志log:
+STATEMENT:  create table t1(id int);
+WARNING:  relation "t1" already exists
+STATEMENT:  create table t1(id int);
+ERROR:  log test.
+
+STATEMENT:  create table t1(id int);
+
+
+日志级别严重的放在后面
+
+--------------------
+elog(ERROR, "cache lookup failed for foreign-data wrapper %u", fdwid);
+
+
+44.2. 报告服务器里的错误
+http://www.php100.com/manual/PostgreSQL8/error-message-reporting.html
