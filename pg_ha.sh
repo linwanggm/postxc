@@ -14,7 +14,7 @@ shot_standby=on
 
 pg_ctl stop -m i
 pg_ctl stop -D $sDATA -m i
-rm -rf $sDATA/pg_xlog
+rm -rf $sDATA/*
 
 #step
 sed -i /port\ =/c\port\ =\ $port                                        $mDATA/postgresql.conf
@@ -22,9 +22,11 @@ sed -i /wal_level\ =/c\wal_level\ =\ $wal_level                         $mDATA/p
 sed -i /max_wal_senders\ =/c\max_wal_senders\ =\ $max_wal_senders       $mDATA/postgresql.conf
 sed -i /wal_keep_segments\ =/c\wal_keep_segments\ =\ $wal_keep_segments $mDATA/postgresql.conf
 sed -i /logging_collector\ =/c\logging_collector\ =\ $logging_collector $mDATA/postgresql.conf
+sed -i 's/#host/host/'  $mDATA/pg_hba.conf
 
 #restart master
 pg_ctl restart
+psql -c "alter user $USER password '123456'"
 psql -c "select pg_start_backup('label');"
 #copy data
 cp -r $mDATA/* $sDATA
