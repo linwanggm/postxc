@@ -1,0 +1,135 @@
+以前写的，放在这里。
+1. simpleest C function -return (a+b)
+add_func.c 's content:
+[wln@localhost postgres9.3]$ cat add_func.c
+#include "postgres.h"
+#include "fmgr.h"
+
+PG_MODULE_MAGIC;
+
+PG_FUNCTION_INFO_V1(add_ab);
+
+Datum
+add_ab(PG_FUNCTION_ARGS)
+{
+    int32 arg_a=PG_GETARG_INT32(0);
+    int32 arg_b=PG_GETARG_INT32(1);
+
+    PG_RETURN_INT32(arg_a+arg_b);
+}
+
+解释如下：
+(1) #include  "postgres.h" : 该头文件包含写C代码的主要的定义和声明
+(2) #include "fmgr.h" : 该头文件包含PG_* 宏定义
+(3) PG_MODULE_MAGIC: This is a "magic block" defined in fmgr.h. This block
+is used by the server to ensure that it does not load code compiled by a
+different version of PostgreSQL, potentially crashing the server. It was
+introduced in Version 8.2 of PostgreSQL. If you really need to write code
+which can also be compiled for PostgreSQL versions before 8.2 you need to
+put this between #ifdef PG_MODULE_MAGIC / #endif. You see this a lot in
+samples available on the Internet, but you probably will not need to do it for
+any new code. The latest pre-8.2 version became officially obsolete (that is
+unsupported) in November 2010, and even 8.2 community support ended in
+December 2011
+(4). PG_FUNCTION_INFO_V1(add_ab) : This introduces the function to
+PostgreSQL as Version 1 calling convention function. Without this line, it
+will be treated as an old-style Version 0 function. (See the information box
+following the Version 0 reference.)
+(5). Datum: This is the return type of a C-language PostgreSQL function.
+(6). add_ab(PG_FUNCTION_ARGS): The function name is add_ab and the rest are
+its arguments. The PG_FUNCTION_ARGS definition can represent any number
+of arguments and has to be present, even for a function taking no arguments
+(7). int32 arg_a = PG_GETARG_INT32(0);: You need to use the PG_GETARG_
+INT32() macro (or corresponding PG_GETARG_xxx() for
+other argument types) to get the argument value.
+(8). PG_RETURN_INT32(arg_a + arg_b);: Finally, you use the
+PG_RETURN_() macro to build and return
+a suitable return value.
+
+Makefile 's content:
+[wln@localhost postgres9.3]$ cat Makefile 
+MODULES = add_func
+
+PG_CONFIG = pg_config
+PGXS := $(shell $(PG_CONFIG) --pgxs)
+include $(PGXS)
+
+编译及测试
+[wln@localhost postgres9.3]$ make
+gcc -O2 -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -g -fpic -I. -I. -I/home/wln/postgres9.3/install/include/server -I/home/wln/postgres9.3/install/include/internal -D_GNU_SOURCE   -c -o add_func.o add_func.c
+add_func.c:9: 警告：‘add_ab’先前没有原型
+gcc -O2 -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -g -fpic -L/home/wln/postgres9.3/install/lib -Wl,--as-needed -Wl,-rpath,'/home/wln/postgres9.3/install/lib',--enable-new-dtags  -shared -o add_func.so add_func.o
+[wln@localhost postgres9.3]$ ll
+总计 21928
+-rw-rw-r--  1 wln wln      231 07-12 09:20 add_func.c
+-rw-rw-r--  1 wln wln     6844 07-12 09:40 add_func.o
+-rwxrwxr-x  1 wln wln     8660 07-12 09:40 add_func.so
+drwx------ 15 wln wln     4096 07-12 09:02 data
+drwxrwxr-x  6 wln wln     4096 07-08 12:31 install
+-rw-rw-r--  1 wln wln       95 07-12 08:58 Makefile
+drwxrwxr-x  6 wln wln     4096 07-08 12:22 postgresql-9.3beta2
+-rw-rw-r--  1 wln wln 22380613 2013-08-03 postgresql-9.3beta2.tar.gz
+[wln@localhost postgres9.3]$ cp add_func.so install/lib/
+[wln@localhost postgres9.3]$ psql -d postgres
+postgres=# CREATE FUNCTION add(int,int)
+RETURNS int
+AS '/home/wln/postgres9.3/install/lib/add_func', 'add_ab'
+LANGUAGE C STRICT;
+CREATE FUNCTION
+postgres=# select add(1,2);
+ add 
+-----
+   3
+(1 row)
+
+postgres=# 
+
+其中lib/add_func为定义的.so动态库文件，后面的add_ab则为该动态库文件中的函数。正常情况下create function name 应该与动态库文件名字对应，这样容易理解。
+如果将.so文件copy到install/lib下，则create function 中共享库文件路径可以写为：/home/wln/postgres9.3/install/lib/add_func 替换为 $libdir/add_func
+
+参考：
+（1）《postgresql server programing》eight charpter "writing advanced functions in C "
+（2）http://www.91linux.com/html/2014/PostgreSQL_0218/8570.html
+（3）http://www.postgresql.org/docs/9.4/static/xfunc-c.html
+      这个是pg官方手册中有关C语言函数相关说明，需要说明的是有的c语言函数返回类型是指针类型，这是由于里面用到了palloc，需要释放堆中空间的
+      需要，但是如果传入是数值类型，会core掉。原因是：本来要传入的是地址，但是传入的是数值，导致无法获取正确的地址。
+      (gdb) bt
+#0  0x00007f267b4077c6 in add_one_float8 (arg=0x3ff199999999999a) at c_test1.c:24
+#1  0x00000000005eb3e7 in ExecMakeFunctionResultNoSets (fcache=0xd53390, econtext=0xd53168, isNull=0xd53dd8 "", 
+    isDone=<optimized out>) at execQual.c:2019
+#2  0x00000000005e6c7d in ExecTargetList (isDone=<optimized out>, itemIsDone=<optimized out>, isnull=<optimized out>, 
+    values=<optimized out>, econtext=<optimized out>, targetlist=<optimized out>) at execQual.c:5365
+#3  ExecProject (projInfo=<optimized out>, isDone=0x7fff5089d21c) at execQual.c:5580
+#4  0x00000000006026b9 in ExecResult (node=0xd53050) at nodeResult.c:155
+#5  0x00000000005e61e8 in ExecProcNode (node=0xd53050) at execProcnode.c:385
+#6  0x00000000005e521f in ExecutePlan (dest=<optimized out>, direction=<optimized out>, numberTuples=<optimized out>, 
+    sendTuples=<optimized out>, operation=<optimized out>, planstate=<optimized out>, estate=<optimized out>) at execMain.c:1549
+#7  standard_ExecutorRun (queryDesc=0xd4b2f8, direction=8, count=0) at execMain.c:337
+#8  0x00000000006f7e87 in PortalRunSelect (portal=0xd4cf08, forward=<optimized out>, count=0, dest=<optimized out>) at pquery.c:942
+#9  0x00000000006f91f1 in PortalRun (portal=0xd4cf08, count=9223372036854775807, isTopLevel=1 '\001', dest=0xd16448, 
+    altdest=0xd16448, completionTag=0x7fff5089d450 "") at pquery.c:786
+#10 0x00000000006f58ab in exec_simple_query (query_string=0xd14d28 "select add_one(1.1);") at postgres.c:1104
+#11 0x00000000006f7185 in PostgresMain (argc=1, argv=<optimized out>, dbname=0xca6008 "postgres", username=<optimized out>)
+    at postgres.c:4030
+#12 0x00000000006935dd in BackendRun (port=<optimized out>) at postmaster.c:4204
+#13 BackendStartup (port=<optimized out>) at postmaster.c:3880
+#14 ServerLoop () at postmaster.c:1683
+#15 0x000000000069472e in PostmasterMain (argc=1, argv=0xca4df0) at postmaster.c:1292
+#16 0x000000000061e2b3 in main (argc=1, argv=0xca4df0) at main.c:223
+(gdb) f 0
+#0  0x00007f267b4077c6 in add_one_float8 (arg=0x3ff199999999999a) at c_test1.c:24
+24          *result = *arg + 1.0;
+(gdb) p *arg
+Cannot access memory at address 0x3ff199999999999a
+这里有个知识需要：
+  printf("%d\n",9);
+  printf("%f\n",9);
+  printf("%f\n",9.0);
+  输出为：
+  9
+  0.000000
+  9.000000
+  需要知道%f 会转化为double类型，float,int 为4个字节，double 8个字节。
+  如果要看是多少， printf("%g\n",9);看下。
+      
+      
