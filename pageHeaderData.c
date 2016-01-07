@@ -44,7 +44,7 @@ typedef uint32 TransactionId;
  * storage on the page.  By convention, lp_len == 0 in every item pointer
  * that does not have storage, independently of its lp_flags state.
  */
-typedef struct ItemIdData
+typedef struct ItemIdData //标示 tuple位置相关信息的结构体
 {
         unsigned        lp_off:15,              /* offset to tuple (from start of page) */
                                 lp_flags:2,             /* state of item pointer, see below */
@@ -328,6 +328,100 @@ wln@iZ232ngsvp8Z:~/pg95> printf "%x\n" 8196
 
 可以看出，open函数读出的内容，和hexdump及函数读出的内容完全一致。
 
+有关标示tuple位置相关信息的结构体ItemIdData	pd_linp[FLEXIBLE_ARRAY_MEMBER]
+在上面代码free(ItemIdDataEle)上面增加如下（前提是对应的表中至少插入了11行数据）：
+  ItemIdData ItemIdDataArray[10];
+  if(read(fd,&ItemIdDataArray,sizeof(ItemIdDataArray)*10)==-1)
+  {
+      printf("%m,%s,line:%d\n",__FILE__,__LINE__);
+      exit(1);
+  }
+  int i=0;
+  while(i<10)
+  {
+     printf("PageHeaderDataEle->pd_linp.lp_off = %d\n",ItemIdDataArray[i].lp_off);
+     printf("PageHeaderDataEle->pd_linp.lp_flags = %d\n",ItemIdDataArray[i].lp_flags);
+     printf("PageHeaderDataEle->pd_linp.lp_len = %d\n",ItemIdDataArray[i].lp_len);
+     i++;
+  }
+
+ 执行如下：
+wln@iZ232ngsvp8Z:~/pg95> ./open data/base/12974/40997
+filename:data/base/12974/40997,21
+sizeof(PageHeaderDataEle)=28
+PageHeaderDataEle.pd_lsn.xlogid = 0
+PageHeaderDataEle.pd_lsn.xrecoff = 315509568
+PageHeaderDataEle.pd_checksum = 0
+PageHeaderDataEle.pd_flags = 0
+PageHeaderDataEle.pd_lower = 112
+PageHeaderDataEle.pd_upper = 7488
+PageHeaderDataEle.pd_special = 8192
+PageHeaderDataEle.pd_pagesize_version = 8196
+PageHeaderDataEle.pd_prune_xid = 0
+PageHeaderDataEle->pd_linp.lp_off = 8160
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 8128
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 8096
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 8064
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 8032
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 8000
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 7968
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 7936
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 7904
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 7872
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+PageHeaderDataEle->pd_linp.lp_off = 7840
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 26
+wln@iZ232ngsvp8Z:~/pg95> psql
+psql (9.5beta1)
+Type "help" for help.
+
+postgres=# select lp,lp_off,lp_flags,lp_len from heap_page_items(get_raw_page('c1', 'main', 0));
+ lp | lp_off | lp_flags | lp_len 
+----+--------+----------+--------
+  1 |   8160 |        1 |     26
+  2 |   8128 |        1 |     26
+  3 |   8096 |        1 |     26
+  4 |   8064 |        1 |     26
+  5 |   8032 |        1 |     26
+  6 |   8000 |        1 |     26
+  7 |   7968 |        1 |     26
+  8 |   7936 |        1 |     26
+  9 |   7904 |        1 |     26
+ 10 |   7872 |        1 |     26
+ 11 |   7840 |        1 |     26
+ 12 |   7808 |        1 |     26
+ 13 |   7776 |        1 |     26
+ 14 |   7744 |        1 |     26
+ 15 |   7712 |        1 |     26
+ 16 |   7680 |        1 |     26
+ 17 |   7648 |        1 |     26
+ 18 |   7616 |        1 |     26
+ 19 |   7584 |        1 |     26
+ 20 |   7552 |        1 |     26
+ 21 |   7520 |        1 |     26
+ 22 |   7488 |        1 |     26
+(22 rows)
+ 
 
 
 参考：http://my.oschina.net/Suregogo/blog/595335?fromerr=4Ru4VQhW
