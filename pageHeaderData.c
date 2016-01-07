@@ -1,3 +1,5 @@
+//see: src/include/storage/bufpage.h
+
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -295,5 +297,37 @@ wln@iZ232ngsvp8Z:~/pg95> hexdump data/base/12974/40997
 0001ff0 0001 0001 0802 0018 6105 0000 0000 0000
 0002000
 
+有关PageHeaderDataEle.pd_lsn.xrecoff：
+wln@iZ232ngsvp8Z:~> printf "%d\n" 0x12cc3b48
+315374408
+
+有关pd_pagesize_version
+/*
+ * PageGetPageLayoutVersion
+ *		Returns the page layout version of a page.
+ */
+#define PageGetPageLayoutVersion(page) \
+	(((PageHeader) (page))->pd_pagesize_version & 0x00FF)
+wln@iZ232ngsvp8Z:~/pg95> printf "%x\n" 8196
+2004
+而0x2004 &0x00ff 则对应4
+
+有关pagesize
+/*
+ * PageGetPageSize
+ *		Returns the page size of a page.
+ *
+ * this can only be called on a formatted page (unlike
+ * BufferGetPageSize, which can be called on an unformatted page).
+ * however, it can be called on a page that is not stored in a buffer.
+ */
+#define PageGetPageSize(page) \
+	((Size) (((PageHeader) (page))->pd_pagesize_version & (uint16) 0xFF00))
+则0x2004 & 0xff00=0x2000为8192
+
+
 可以看出，open函数读出的内容，和hexdump及函数读出的内容完全一致。
+
+
+
 参考：http://my.oschina.net/Suregogo/blog/595335?fromerr=4Ru4VQhW
