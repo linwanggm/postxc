@@ -35,8 +35,8 @@ struct HeapTupleHeaderData
 通过pg_relation_filepath('tbname')找出其对应的表数据文件，通过hex 文件名 即可查看
 下面简单画出该结构体示意图(由于hexdump每16个字节输出1行，所以下面也是16字节1行):
 
- xmin(4bytes)     xmax（4bytes）                            cmax(4bytes)                   cmin(4bytes)    ctid(4bytes+4bytes+..)
- ctid(..+4bytes)  t_infomask2(2bytes) t_informask(2bytes)   t_bits(1byte) t_hoff(1byte)  values(...)
+ xmin(4bytes)                         xmax（4bytes）                                    cmin/cmax(4bytes)         ctid(4bytes+..)
+ ctid(..+2bytes)  t_infomask2(2bytes) t_informask(2bytes)   t_bits(1byte) t_hoff(1byte)  values(...)
  
  操作示例；
  wln@iZ232ngsvp8Z:~> psql
