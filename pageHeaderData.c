@@ -1,3 +1,90 @@
+说明：下面使用函数需要加载contrib/pageinspect
+
+表数据存储文件页（8K）包含存储结构如下：这个图示来自pg9.5源代码src/include/storage/bufpage.h中：
+/*
+ * A postgres disk page is an abstraction layered on top of a postgres
+ * disk block (which is simply a unit of i/o, see block.h).
+ *
+ * specifically, while a disk block can be unformatted, a postgres
+ * disk page is always a slotted page of the form:
+ *
+ * +----------------+---------------------------------+
+ * | PageHeaderData | linp1 linp2 linp3 ...           |
+ * +-----------+----+---------------------------------+
+ * | ... linpN |									  |
+ * +-----------+--------------------------------------+
+ * |		   ^ pd_lower							  |
+ * |												  |
+ * |			 v pd_upper							  |
+ * +-------------+------------------------------------+
+ * |			 | tupleN ...                         |
+ * +-------------+------------------+-----------------+
+ * |	   ... tuple3 tuple2 tuple1 | "special space" |
+ * +--------------------------------+-----------------+
+ *									^ pd_special
+ *
+ * a page is full when nothing can be added between pd_lower and
+ * pd_upper.
+ *
+ * all blocks written out by an access method must be disk pages.
+ *
+ * EXCEPTIONS:
+ *
+ * obviously, a page is not formatted before it is initialized by
+ * a call to PageInit.
+ *
+ * NOTES:
+ *
+ * linp1..N form an ItemId array.  ItemPointers point into this array
+ * rather than pointing directly to a tuple.  Note that OffsetNumbers
+ * conventionally start at 1, not 0.
+ *
+ * tuple1..N are added "backwards" on the page.  because a tuple's
+ * ItemPointer points to its ItemId entry rather than its actual
+ * byte-offset position, tuples can be physically shuffled on a page
+ * whenever the need arises.
+ *
+ * AM-generic per-page information is kept in PageHeaderData.
+ *
+ * AM-specific per-page data (if any) is kept in the area marked "special
+ * space"; each AM has an "opaque" structure defined somewhere that is
+ * stored as the page trailer.  an access method should always
+ * initialize its pages with PageInit and then set its own opaque
+ * fields.
+ */
+ 
+ 其中，PageHeaderData包含内容如下：
+ PageHeaderDataEle.pd_lsn.xlogid = 0
+PageHeaderDataEle.pd_lsn.xrecoff = 315817760
+PageHeaderDataEle.pd_checksum = 0
+PageHeaderDataEle.pd_flags = 0
+PageHeaderDataEle.pd_lower = 92
+PageHeaderDataEle.pd_upper = 7552
+PageHeaderDataEle.pd_special = 8192
+PageHeaderDataEle.pd_pagesize_version = 8196
+PageHeaderDataEle.pd_prune_xid = 1321
+PageHeaderDataEle->pd_linp.lp_off = 8152
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 40
+PageHeaderDataEle->pd_linp.lp_off = 8112
+PageHeaderDataEle->pd_linp.lp_flags = 1
+PageHeaderDataEle->pd_linp.lp_len = 40
+....
+具体内容含义，可以阅读《PostgreSQL数据库内核分析》P58
+linpx 是一个结构体，如下：
+typedef struct ItemIdData
+{
+	unsigned	lp_off:15,		/* offset to tuple (from start of page) */
+				lp_flags:2,		/* state of item pointer, see below */
+				lp_len:15;		/* byte length of tuple */
+} ItemIdData;
+标记了对应的tuple在页中offset位置，该tuple状态，该tuple长度。
+
+现在我们已经已经知道了表数据文件内部数据结构，不考虑可见性判断mvcc，那么我们可以根据这些内容读出表中所存储的数据内容。
+现实不会这么简单，比如需要考虑可见性判断、一个tuple中字段attr个数、是否含有空行、是否有oid、元组头长度（tuple长度除去实际表
+数据长度）。
+
+
 //see: src/include/storage/bufpage.h
 
 #include <stdio.h>
