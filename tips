@@ -1,5 +1,6 @@
 以前写的，放在这里。
-1. simpleest C function -return (a+b)
+1. C 函数 
+simpleest C function -return (a+b)
 add_func.c 's content:
 [wln@localhost postgres9.3]$ cat add_func.c
 #include "postgres.h"
@@ -132,4 +133,47 @@ Cannot access memory at address 0x3ff199999999999a
   需要知道%f 会转化为double类型，float,int 为4个字节，double 8个字节。
   如果要看是多少， printf("%g\n",9);看下。
       
-      
+2.  数据库系统视图
+
+见源码中src/backend/catalog/system_views.sql
+如果需要添加系统视图或者修改系统视图定义，可以在这个文件中修改。
+例如：
+CREATE VIEW pg_roles AS
+    SELECT
+        rolname,
+        rolsuper,
+        rolinherit,
+        rolcreaterole,
+        rolcreatedb,
+        rolcanlogin,
+        rolreplication,
+        rolconnlimit,
+        '********'::text as rolpassword,
+        rolvaliduntil,
+        rolbypassrls,
+        setconfig as rolconfig,
+        pg_authid.oid
+    FROM pg_authid LEFT JOIN pg_db_role_setting s
+    ON (pg_authid.oid = setrole AND setdatabase = 0);
+
+里面包含了函数定义：
+比如：
+CREATE FUNCTION ts_debug(IN document text,
+    OUT alias text,
+    OUT description text,
+    OUT token text,
+    OUT dictionaries regdictionary[],
+    OUT dictionary regdictionary,
+    OUT lexemes text[])
+RETURNS SETOF record AS
+$$
+    SELECT * FROM pg_catalog.ts_debug( pg_catalog.get_current_ts_config(), $1);
+$$
+LANGUAGE SQL STRICT STABLE;
+
+
+    
+    
+
+
+
