@@ -1,0 +1,14 @@
+1.Add CASCADE support for CREATE EXTENSION.
+2015-10-03	Andres Freund	
+http://git.postgresql.org/gitweb/?p=postgresql.git;a=commit;h=b67aaf21e8ef8273d5179a8832a109153d7adfe1
+
+2. Create a function to reliably identify which sessions block which others.
+Tom Lane <tgl@sss.pgh.pa.us> Mon, 22 Feb 2016 
+http://git.postgresql.org/gitweb/?p=postgresql.git;a=commit;h=52f5d578d6c29bf254e93c69043b817d4047ca67
+
+3.Add pg_size_bytes() to parse human-readable size strings.
+Dean Rasheed	Mon, 22 Feb 2016 
+http://git.postgresql.org/gitweb/?p=postgresql.git;a=commit;h=53874c5228fe16589a4d01b3e1fab3678e0fd8e3
+
+
+
