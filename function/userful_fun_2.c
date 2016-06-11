@@ -51,4 +51,11 @@ mysalt[1] = salt_chars[random() & 0x3f];
 	char	   *priv_type = text_to_cstring(priv_type_text);
 	
 
+7. 变量StringInfoData buf;
+初始化initStringInfo(&buf);
+resetStringInfo(StringInfo str)
+appendStringInfoChar(&buf, '(');
+appendStringInfo(&buf, ", ");
+pfree(buf.data)
+
 
