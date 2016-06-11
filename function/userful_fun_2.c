@@ -39,6 +39,16 @@ mysalt[1] = salt_chars[random() & 0x3f];
 	PG_RETURN_TEXT_P(cstring_to_text(password->password));
    :: 函数cstring_to_text()
    
+6. text_to)cstring函数
+   text_to_cstring_buffer函数
+   
+	text	   *a2 = PG_GETARG_TEXT_PP(1);
+	char		str[9];
 
+	text_to_cstring_buffer(a2, str, sizeof(str));
+	PG_RETURN_BOOL(strcmp(a1->password, crypt(str, a1->password)) == 0);
+	
+	char	   *priv_type = text_to_cstring(priv_type_text);
+	
 
 
