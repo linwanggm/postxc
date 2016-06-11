@@ -15,6 +15,8 @@ pg_usleep(long microsec)
 	GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
 	TimeADT		query = PG_GETARG_TIMEADT(1);
 	StrategyNumber strategy = (StrategyNumber) PG_GETARG_UINT16(2);
+：： 可以看出，第一个参数是pointer类型，第二个是time类型，第三个为uint16类型。
+总之，PG_GETARG_xxx是根据对应的参数来设置的。
 	
 3. 调用系统函数
 	const TimeADT *aa = (const TimeADT *) a;
