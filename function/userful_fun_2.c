@@ -11,3 +11,18 @@ pg_usleep(long microsec)
 
 ：：对比linux， linux下为usleep(微秒数)， sleep(秒数)
 
+2. 系统函数参数
+	GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
+	TimeADT		query = PG_GETARG_TIMEADT(1);
+	StrategyNumber strategy = (StrategyNumber) PG_GETARG_UINT16(2);
+	
+3. 调用系统函数
+	const TimeADT *aa = (const TimeADT *) a;
+	const TimeADT *bb = (const TimeADT *) b;
+
+	return DatumGetBool(DirectFunctionCall2(time_lt,
+											TimeADTGetDatumFast(*aa),
+											TimeADTGetDatumFast(*bb)));
+	：：系统函数time_lt，用DirectFunctionCallx调用，注意参数*aa, *bb类型，必须与time_lt系统函数参数类型一致。
+	
+	
