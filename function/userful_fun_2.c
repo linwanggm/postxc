@@ -27,4 +27,18 @@ pg_usleep(long microsec)
 											TimeADTGetDatumFast(*bb)));
 	：：系统函数time_lt，用DirectFunctionCallx调用，注意参数*aa, *bb类型，必须与time_lt系统函数参数类型一致。
 	
-	
+4. 随机赋值
+static char salt_chars[] =
+	"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+mysalt[0] = salt_chars[random() & 0x3f];
+mysalt[1] = salt_chars[random() & 0x3f];
+
+5. cstring to text
+	chkpass    *password = (chkpass *) PG_GETARG_POINTER(0);
+
+	PG_RETURN_TEXT_P(cstring_to_text(password->password));
+   :: 函数cstring_to_text()
+   
+
+
+
