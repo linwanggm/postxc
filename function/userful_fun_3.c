@@ -70,5 +70,7 @@ ind_context = AllocSetContextCreate(anl_context,
 	systable_endscan(scan);
 	heap_close(indexRelation, AccessShareLock);
 	
-	
+7. 给字符串加引号
+quote_ident_cstr(NameStr(tupdesc->attrs[i]->attname))
+
 	
