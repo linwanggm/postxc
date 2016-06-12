@@ -58,4 +58,7 @@ appendStringInfoChar(&buf, '(');
 appendStringInfo(&buf, ", ");
 pfree(buf.data)
 
+8.
+#define NAMEDATALEN 64
+#define MAXLINE 1024
 
