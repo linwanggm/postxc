@@ -46,7 +46,29 @@ ind_context = AllocSetContextCreate(anl_context,
 	MemoryContextDelete(ind_context);
 	在中间地带申请的内存，即使不是放，也会随着MemoryContextSwitchTo 切换会old_context而释放，注意create的context需要释放掉。
 	
-	
+6. 表扫描
+/* Prepare to scan pg_index for entries having indrelid = this rel. */
+	indexRelation = heap_open(IndexRelationId, AccessShareLock);
+	ScanKeyInit(&skey,
+				Anum_pg_index_indrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(RelationGetRelid(rel)));
+
+	scan = systable_beginscan(indexRelation, IndexIndrelidIndexId, true,
+							  SnapshotNow, 1, &skey);
+
+	while (HeapTupleIsValid(indexTuple = systable_getnext(scan)))
+	{
+		Form_pg_index index = (Form_pg_index) GETSTRUCT(indexTuple);
+
+		/* we're only interested if it is the primary key */
+		if (index->indisprimary)
+		{
+		}
+	}
+
+	systable_endscan(scan);
+	heap_close(indexRelation, AccessShareLock);
 	
 	
 	
