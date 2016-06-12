@@ -30,3 +30,23 @@ PG_TRY();
 PG_CATCH();
 {}
 PG_END_TRY();
+
+5.
+postgresql 内存上下文切换
+	MemoryContext ind_context,
+				old_context;
+ind_context = AllocSetContextCreate(anl_context,
+										"Analyze Index",
+										ALLOCSET_DEFAULT_MINSIZE,
+										ALLOCSET_DEFAULT_INITSIZE,
+										ALLOCSET_DEFAULT_MAXSIZE);
+	old_context = MemoryContextSwitchTo(ind_context);
+	.....
+	MemoryContextSwitchTo(old_context);
+	MemoryContextDelete(ind_context);
+	在中间地带申请的内存，即使不是放，也会随着MemoryContextSwitchTo 切换会old_context而释放，注意create的context需要释放掉。
+	
+	
+	
+	
+	
