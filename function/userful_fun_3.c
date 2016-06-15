@@ -70,5 +70,34 @@ ind_context = AllocSetContextCreate(anl_context,
 	systable_endscan(scan);
 	heap_close(indexRelation, AccessShareLock);
 	
- 
+ 7. 阅读PostgreSQL代码注释的必要性
+ 与索引相关的文件有indexing.h   syscache.h   syscache.c
+ 一个索引定义及索引名字使用的定义之前总是有疑惑，看到syscache.c中这样说明，豁然开朗。
+ 	Adding system caches:
+
+	Add your new cache to the list in include/utils/syscache.h.
+	Keep the list sorted alphabetically.
+
+	Add your entry to the cacheinfo[] array below. All cache lists are
+	alphabetical, so add it in the proper place.  Specify the relation OID,
+	index OID, number of keys, key attribute numbers, and initial number of
+	hash buckets.
+
+	The number of hash buckets must be a power of 2.  It's reasonable to
+	set this to the number of entries that might be in the particular cache
+	in a medium-size database.
+
+	There must be a unique index underlying each syscache (ie, an index
+	whose key is the same as that of the cache).  If there is not one
+	already, add definitions for it to include/catalog/indexing.h: you need
+	to add a DECLARE_UNIQUE_INDEX macro and a #define for the index OID.
+	(Adding an index requires a catversion.h update, while simply
+	adding/deleting caches only requires a recompile.)
+
+	Finally, any place your relation gets heap_insert() or
+	heap_update() calls, make sure there is a CatalogUpdateIndexes() or
+	similar call.  The heap_* calls do not update indexes.
+：： Add your entry to the cacheinfo[] array below. All cache lists are
+	alphabetical。 以及上面最后一段，详细说明了定义与名称对应的顺序性，以及更新索引的必要性。
+	
 	
