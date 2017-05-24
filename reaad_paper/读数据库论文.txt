@@ -1,0 +1,4 @@
+读论文《多核处理器下事务型数据库性能优化技术综述》
+论文地址：https://wenku.baidu.com/view/102b5939f61fb7360a4c65bd.html
+
+
