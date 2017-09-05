@@ -1,0 +1,2 @@
+位置 src/backend/pgxc/pool/pgxcnode.c
+代码逻辑清晰，对理解coordinator, datanode, gtm 之间通信内容有助于较好理解。
