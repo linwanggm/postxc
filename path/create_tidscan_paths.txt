@@ -1,0 +1,55 @@
+理解create_tidscan_paths 函数及其上下文
+
+测试语句：
+create table test1(id1 int, id2 char);
+insert into test1 values(1,'a');
+insert into test1 values(2,'b');
+insert into test1 values(3,'c');
+insert into test1 values(4,'d');
+insert into test1 values(5,'e');
+insert into test1 values(6,'f');
+
+set enable_seqscan = off;
+
+explain select * from test1 where ctid = '(0,1)';
+
+                     QUERY PLAN
+-----------------------------------------------------
+ Tid Scan on test1  (cost=0.00..4.01 rows=1 width=9)
+   TID Cond: (ctid = '(0,1)'::tid)
+(2 rows)
+
+
+#0  create_tidscan_paths (root=0x1033228, rel=0x1064028) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/path/tidpath.c:251
+#1  0x0000000000645583 in set_plain_rel_pathlist (rte=0x10326f8, rel=0x1064028, root=0x1033228)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/path/allpaths.c:670
+#2  set_rel_pathlist (root=root@entry=0x1033228, rel=0x1064028, rti=rti@entry=1, rte=0x10326f8)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/path/allpaths.c:429
+#3  0x0000000000645ab5 in set_base_rel_pathlists (root=<optimized out>) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/path/allpaths.c:301
+#4  make_one_rel (root=root@entry=0x1033228, joinlist=joinlist@entry=0x10643d0)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/path/allpaths.c:171
+#5  0x000000000066221f in query_planner (root=root@entry=0x1033228, tlist=tlist@entry=0x1033440, qp_callback=qp_callback@entry=0x6627f0 <standard_qp_callback>, 
+    qp_extra=qp_extra@entry=0x7fff8c80ded0) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/plan/planmain.c:255
+#6  0x0000000000663c56 in grouping_planner (root=root@entry=0x1033228, inheritance_update=inheritance_update@entry=0 '\000', tuple_fraction=<optimized out>, 
+    tuple_fraction@entry=0) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/plan/planner.c:1701
+#7  0x0000000000666904 in subquery_planner (glob=glob@entry=0x1033190, parse=parse@entry=0x10325e0, parent_root=parent_root@entry=0x0, 
+    hasRecursion=hasRecursion@entry=0 '\000', tuple_fraction=tuple_fraction@entry=0)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/plan/planner.c:759
+#8  0x0000000000667971 in standard_planner (parse=0x10325e0, cursorOptions=256, boundParams=0x0)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/optimizer/plan/planner.c:292
+#9  0x00000000006fa27d in pg_plan_query (querytree=0x10325e0, cursorOptions=cursorOptions@entry=256, boundParams=boundParams@entry=0x0)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/tcop/postgres.c:798
+#10 0x00000000006fa381 in pg_plan_queries (querytrees=<optimized out>, cursorOptions=cursorOptions@entry=256, boundParams=boundParams@entry=0x0)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/tcop/postgres.c:857
+#11 0x00000000006fc402 in exec_simple_query (query_string=0x1031498 "select * from test1 where ctid = '(0,1)';")
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/tcop/postgres.c:1022
+#12 PostgresMain (argc=<optimized out>, argv=argv@entry=0xfdbd80, dbname=0xfb2d38 "postgres", username=<optimized out>)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/tcop/postgres.c:4076
+#13 0x000000000046b794 in BackendRun (port=0xfd3660) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/postmaster/postmaster.c:4271
+#14 BackendStartup (port=0xfd3660) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/postmaster/postmaster.c:3945
+#15 ServerLoop () at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/postmaster/postmaster.c:1701
+#16 0x0000000000696cb8 in PostmasterMain (argc=argc@entry=3, argv=argv@entry=0xfb0bc0)
+    at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/postmaster/postmaster.c:1309
+#17 0x000000000046c5c0 in main (argc=3, argv=0xfb0bc0) at /home/wln/pg/buildpg962/../postgresql-9.6.2/src/backend/main/main.c:228
+
+
