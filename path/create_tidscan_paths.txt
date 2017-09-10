@@ -55,9 +55,12 @@ explain select * from test1 where ctid = '(0,1)';
 
 1. 函数create_tidscan_paths 
 参考内容：《postgres查询引擎源码技术探讨》 5.4 构建TID访问路径
-《postgresql数据库内核分析》 5.4 生成TID扫描路径 p250  5.5 TidScan节点 p315
+《postgresql数据库内核分析》 5.4 生成TID扫描路径 p250             5.5 TidScan节点 p315 (属于计划执行阶段内容)
 流程如下：
-（1）通过函数TidQualFromRestrictinfo（）从表的RelOptInfo结构的baserestrictinfo中提取TID约束条件；
+（1）通过函数TidQualFromRestrictinfo（）从表的RelOptInfo结构的baserestrictinfo中提取TID约束条件
+     约束条件有"CTID = pseudoconstant" ， "CTID = pseudoconstant or CTID = pseudoconstant..." , "CTID = pseudoconstant 
+     and CTID = pseudoconstant..." ,  "CTID = ANY(pseudoconstant_array)" ...
+  
 （2）根据TID条件调用create_tidscan_path生成TID扫描路径；
 （3）尝试将TID扫描路径通过add_path加入到pathlish中。
 
