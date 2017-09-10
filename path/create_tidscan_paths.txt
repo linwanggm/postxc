@@ -62,6 +62,33 @@ explain select * from test1 where ctid = '(0,1)';
      and CTID = pseudoconstant..." ,  "CTID = ANY(pseudoconstant_array)" ...
   
 （2）根据TID条件调用create_tidscan_path生成TID扫描路径；
+/*
+ * create_tidscan_path
+ *	  Creates a path corresponding to a scan by TID, returning the pathnode.
+ */
+TidPath *
+create_tidscan_path(PlannerInfo *root, RelOptInfo *rel, List *tidquals,
+					Relids required_outer)
+{
+	TidPath    *pathnode = makeNode(TidPath);
+
+	pathnode->path.pathtype = T_TidScan;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = rel->reltarget;
+	pathnode->path.param_info = get_baserel_parampathinfo(root, rel,
+														  required_outer);
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = rel->consider_parallel;
+	pathnode->path.parallel_workers = 0;
+	pathnode->path.pathkeys = NIL;		/* always unordered */
+
+	pathnode->tidquals = tidquals;
+
+	cost_tidscan(&pathnode->path, root, rel, tidquals,
+				 pathnode->path.param_info);
+
+	return pathnode;
+}
 （3）尝试将TID扫描路径通过add_path加入到pathlish中。
 
 
