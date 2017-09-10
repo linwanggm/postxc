@@ -12,7 +12,9 @@
 ->query_level             查询层级  ：： 可认为等同于看explain显示的层级吧，或者语法树的层级 ？
 simple_rel_array          保存基表信息的数组
 simple_rel_array_size     基表数组的大小
-simple_rte_array          保存的是RangTblEntry类型
+simple_rte_array          保存的是RangTblEntry类型 (还没太理解懂)
+...
+后面的是有关join 及 pathkey之类的数据结构变量。
 
 
 /*----------
@@ -192,6 +194,682 @@ typedef struct PlannerInfo
 } PlannerInfo;
 
 
+2. PlannerGlobal 全局优化信息
+
+
+/*----------
+ * PlannerGlobal
+ *		Global information for planning/optimization
+ *
+ * PlannerGlobal holds state for an entire planner invocation; this state
+ * is shared across all levels of sub-Queries that exist in the command being
+ * planned.
+ *----------
+ */
+typedef struct PlannerGlobal
+{
+	NodeTag		type;
+
+	ParamListInfo boundParams;	/* Param values provided to planner() */
+
+	List	   *subplans;		/* Plans for SubPlan nodes */
+
+	List	   *subroots;		/* PlannerInfos for SubPlan nodes */
+
+	Bitmapset  *rewindPlanIDs;	/* indices of subplans that require REWIND */
+
+	List	   *finalrtable;	/* "flat" rangetable for executor */
+
+	List	   *finalrowmarks;	/* "flat" list of PlanRowMarks */
+
+	List	   *resultRelations;	/* "flat" list of integer RT indexes */
+
+	List	   *relationOids;	/* OIDs of relations the plan depends on */
+
+	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
+
+	int			nParamExec;		/* number of PARAM_EXEC Params used */
+
+	Index		lastPHId;		/* highest PlaceHolderVar ID assigned */
+
+	Index		lastRowMarkId;	/* highest PlanRowMark ID assigned */
+
+	int			lastPlanNodeId; /* highest plan node ID assigned */
+
+	bool		transientPlan;	/* redo plan when TransactionXmin changes? */
+
+	bool		dependsOnRole;	/* is plan specific to current role? */
+
+	bool		parallelModeOK; /* parallel mode potentially OK? */
+
+	bool		parallelModeNeeded;		/* parallel mode actually required? */
+
+	char		maxParallelHazard;		/* worst PROPARALLEL hazard level */
+} PlannerGlobal;
+
+3. PlannedStmt 已优化查询计划信息
+该结构体记录了语句优化后的所有信息
+
+/* ----------------
+ *		PlannedStmt node
+ *
+ * The output of the planner is a Plan tree headed by a PlannedStmt node.
+ * PlannedStmt holds the "one time" information needed by the executor.
+ *
+ * For simplicity in APIs, we also wrap utility statements in PlannedStmt
+ * nodes; in such cases, commandType == CMD_UTILITY, the statement itself
+ * is in the utilityStmt field, and the rest of the struct is mostly dummy.
+ * (We do use canSetTag, stmt_location, stmt_len, and possibly queryId.)
+ * ----------------
+ */
+typedef struct PlannedStmt
+{
+	NodeTag		type;
+
+	CmdType		commandType;	/* select|insert|update|delete|utility */
+
+	uint32		queryId;		/* query identifier (copied from Query) */
+
+	bool		hasReturning;	/* is it insert|update|delete RETURNING? */
+
+	bool		hasModifyingCTE;	/* has insert|update|delete in WITH? */
+
+	bool		canSetTag;		/* do I set the command result tag? */
+
+	bool		transientPlan;	/* redo plan when TransactionXmin changes? */
+
+	bool		dependsOnRole;	/* is plan specific to current role? */
+
+	bool		parallelModeNeeded;		/* parallel mode required to execute? */
+
+	struct Plan *planTree;		/* tree of Plan nodes */
+
+	List	   *rtable;			/* list of RangeTblEntry nodes */
+
+	/* rtable indexes of target relations for INSERT/UPDATE/DELETE */
+	List	   *resultRelations;	/* integer list of RT indexes, or NIL */
+
+	List	   *subplans;		/* Plan trees for SubPlan expressions */
+
+	Bitmapset  *rewindPlanIDs;	/* indices of subplans that require REWIND */
+
+	List	   *rowMarks;		/* a list of PlanRowMark's */
+
+	List	   *relationOids;	/* OIDs of relations the plan depends on */
+
+	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
+
+	int			nParamExec;		/* number of PARAM_EXEC Params used */
+
+	Node	   *utilityStmt;	/* non-null if this is utility stmt */
+
+	/* statement location in source string (copied from Query) */
+	int			stmt_location;	/* start location, or -1 if unknown */
+	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
+} PlannedStmt;
+
+
+4. RelOptInfo 基表信息
+ 可以看做所有有关表信息的内容都在这里
+ 比如：该基表类型（是普通表还是中间过程表等）、relids 该表index相关内容、表行数rows、行宽度width、pathlist查询路径、
+       ppilist参数化路径信息、cheapest_startup_path启动代价最优路径、cheapest_total_path总代价最优路径、cheapest_unique_path为产生唯一结果而缓存的最优查询访问路径、cheapest_parameterized_paths参数化最优路径、rtekind基表类型、pages页表大小、tuples行数量等。
+ 
+ /*----------
+ * RelOptInfo
+ *		Per-relation information for planning/optimization
+ *
+ * For planning purposes, a "base rel" is either a plain relation (a table)
+ * or the output of a sub-SELECT or function that appears in the range table.
+ * In either case it is uniquely identified by an RT index.  A "joinrel"
+ * is the joining of two or more base rels.  A joinrel is identified by
+ * the set of RT indexes for its component baserels.  We create RelOptInfo
+ * nodes for each baserel and joinrel, and store them in the PlannerInfo's
+ * simple_rel_array and join_rel_list respectively.
+ *
+ * Note that there is only one joinrel for any given set of component
+ * baserels, no matter what order we assemble them in; so an unordered
+ * set is the right datatype to identify it with.
+ *
+ * We also have "other rels", which are like base rels in that they refer to
+ * single RT indexes; but they are not part of the join tree, and are given
+ * a different RelOptKind to identify them.
+ * Currently the only kind of otherrels are those made for member relations
+ * of an "append relation", that is an inheritance set or UNION ALL subquery.
+ * An append relation has a parent RTE that is a base rel, which represents
+ * the entire append relation.  The member RTEs are otherrels.  The parent
+ * is present in the query join tree but the members are not.  The member
+ * RTEs and otherrels are used to plan the scans of the individual tables or
+ * subqueries of the append set; then the parent baserel is given Append
+ * and/or MergeAppend paths comprising the best paths for the individual
+ * member rels.  (See comments for AppendRelInfo for more information.)
+ *
+ * At one time we also made otherrels to represent join RTEs, for use in
+ * handling join alias Vars.  Currently this is not needed because all join
+ * alias Vars are expanded to non-aliased form during preprocess_expression.
+ *
+ * There is also a RelOptKind for "upper" relations, which are RelOptInfos
+ * that describe post-scan/join processing steps, such as aggregation.
+ * Many of the fields in these RelOptInfos are meaningless, but their Path
+ * fields always hold Paths showing ways to do that processing step.
+ *
+ * Lastly, there is a RelOptKind for "dead" relations, which are base rels
+ * that we have proven we don't need to join after all.
+ *
+ * Parts of this data structure are specific to various scan and join
+ * mechanisms.  It didn't seem worth creating new node types for them.
+ *
+ *		relids - Set of base-relation identifiers; it is a base relation
+ *				if there is just one, a join relation if more than one
+ *		rows - estimated number of tuples in the relation after restriction
+ *			   clauses have been applied (ie, output rows of a plan for it)
+ *		consider_startup - true if there is any value in keeping plain paths for
+ *						   this rel on the basis of having cheap startup cost
+ *		consider_param_startup - the same for parameterized paths
+ *		reltarget - Default Path output tlist for this rel; normally contains
+ *					Var and PlaceHolderVar nodes for the values we need to
+ *					output from this relation.
+ *					List is in no particular order, but all rels of an
+ *					appendrel set must use corresponding orders.
+ *					NOTE: in an appendrel child relation, may contain
+ *					arbitrary expressions pulled up from a subquery!
+ *		pathlist - List of Path nodes, one for each potentially useful
+ *				   method of generating the relation
+ *		ppilist - ParamPathInfo nodes for parameterized Paths, if any
+ *		cheapest_startup_path - the pathlist member with lowest startup cost
+ *			(regardless of ordering) among the unparameterized paths;
+ *			or NULL if there is no unparameterized path
+ *		cheapest_total_path - the pathlist member with lowest total cost
+ *			(regardless of ordering) among the unparameterized paths;
+ *			or if there is no unparameterized path, the path with lowest
+ *			total cost among the paths with minimum parameterization
+ *		cheapest_unique_path - for caching cheapest path to produce unique
+ *			(no duplicates) output from relation; NULL if not yet requested
+ *		cheapest_parameterized_paths - best paths for their parameterizations;
+ *			always includes cheapest_total_path, even if that's unparameterized
+ *		direct_lateral_relids - rels this rel has direct LATERAL references to
+ *		lateral_relids - required outer rels for LATERAL, as a Relids set
+ *			(includes both direct and indirect lateral references)
+ *
+ * If the relation is a base relation it will have these fields set:
+ *
+ *		relid - RTE index (this is redundant with the relids field, but
+ *				is provided for convenience of access)
+ *		rtekind - distinguishes plain relation, subquery, or function RTE
+ *		min_attr, max_attr - range of valid AttrNumbers for rel
+ *		attr_needed - array of bitmapsets indicating the highest joinrel
+ *				in which each attribute is needed; if bit 0 is set then
+ *				the attribute is needed as part of final targetlist
+ *		attr_widths - cache space for per-attribute width estimates;
+ *					  zero means not computed yet
+ *		lateral_vars - lateral cross-references of rel, if any (list of
+ *					   Vars and PlaceHolderVars)
+ *		lateral_referencers - relids of rels that reference this one laterally
+ *				(includes both direct and indirect lateral references)
+ *		indexlist - list of IndexOptInfo nodes for relation's indexes
+ *					(always NIL if it's not a table)
+ *		pages - number of disk pages in relation (zero if not a table)
+ *		tuples - number of tuples in relation (not considering restrictions)
+ *		allvisfrac - fraction of disk pages that are marked all-visible
+ *		subroot - PlannerInfo for subquery (NULL if it's not a subquery)
+ *		subplan_params - list of PlannerParamItems to be passed to subquery
+ *
+ *		Note: for a subquery, tuples and subroot are not set immediately
+ *		upon creation of the RelOptInfo object; they are filled in when
+ *		set_subquery_pathlist processes the object.
+ *
+ *		For otherrels that are appendrel members, these fields are filled
+ *		in just as for a baserel, except we don't bother with lateral_vars.
+ *
+ * If the relation is either a foreign table or a join of foreign tables that
+ * all belong to the same foreign server and are assigned to the same user to
+ * check access permissions as (cf checkAsUser), these fields will be set:
+ *
+ *		serverid - OID of foreign server, if foreign table (else InvalidOid)
+ *		userid - OID of user to check access as (InvalidOid means current user)
+ *		useridiscurrent - we've assumed that userid equals current user
+ *		fdwroutine - function hooks for FDW, if foreign table (else NULL)
+ *		fdw_private - private state for FDW, if foreign table (else NULL)
+ *
+ * The presence of the remaining fields depends on the restrictions
+ * and joins that the relation participates in:
+ *
+ *		baserestrictinfo - List of RestrictInfo nodes, containing info about
+ *					each non-join qualification clause in which this relation
+ *					participates (only used for base rels)
+ *		baserestrictcost - Estimated cost of evaluating the baserestrictinfo
+ *					clauses at a single tuple (only used for base rels)
+ *		baserestrict_min_security - Smallest security_level found among
+ *					clauses in baserestrictinfo
+ *		joininfo  - List of RestrictInfo nodes, containing info about each
+ *					join clause in which this relation participates (but
+ *					note this excludes clauses that might be derivable from
+ *					EquivalenceClasses)
+ *		has_eclass_joins - flag that EquivalenceClass joins are possible
+ *
+ * Note: Keeping a restrictinfo list in the RelOptInfo is useful only for
+ * base rels, because for a join rel the set of clauses that are treated as
+ * restrict clauses varies depending on which sub-relations we choose to join.
+ * (For example, in a 3-base-rel join, a clause relating rels 1 and 2 must be
+ * treated as a restrictclause if we join {1} and {2 3} to make {1 2 3}; but
+ * if we join {1 2} and {3} then that clause will be a restrictclause in {1 2}
+ * and should not be processed again at the level of {1 2 3}.)	Therefore,
+ * the restrictinfo list in the join case appears in individual JoinPaths
+ * (field joinrestrictinfo), not in the parent relation.  But it's OK for
+ * the RelOptInfo to store the joininfo list, because that is the same
+ * for a given rel no matter how we form it.
+ *
+ * We store baserestrictcost in the RelOptInfo (for base relations) because
+ * we know we will need it at least once (to price the sequential scan)
+ * and may need it multiple times to price index scans.
+ *----------
+ */
+typedef enum RelOptKind
+{
+	RELOPT_BASEREL,
+	RELOPT_JOINREL,
+	RELOPT_OTHER_MEMBER_REL,
+	RELOPT_UPPER_REL,
+	RELOPT_DEADREL
+} RelOptKind;
+
+typedef struct RelOptInfo
+{
+	NodeTag		type;
+
+	RelOptKind	reloptkind;
+
+	/* all relations included in this RelOptInfo */
+	Relids		relids;			/* set of base relids (rangetable indexes) */
+
+	/* size estimates generated by planner */
+	double		rows;			/* estimated number of result tuples */
+
+	/* per-relation planner control flags */
+	bool		consider_startup;		/* keep cheap-startup-cost paths? */
+	bool		consider_param_startup; /* ditto, for parameterized paths? */
+	bool		consider_parallel;		/* consider parallel paths? */
+
+	/* default result targetlist for Paths scanning this relation */
+	struct PathTarget *reltarget;		/* list of Vars/Exprs, cost, width */
+
+	/* materialization information */
+	List	   *pathlist;		/* Path structures */
+	List	   *ppilist;		/* ParamPathInfos used in pathlist */
+	List	   *partial_pathlist;		/* partial Paths */
+	struct Path *cheapest_startup_path;
+	struct Path *cheapest_total_path;
+	struct Path *cheapest_unique_path;
+	List	   *cheapest_parameterized_paths;
+
+	/* parameterization information needed for both base rels and join rels */
+	/* (see also lateral_vars and lateral_referencers) */
+	Relids		direct_lateral_relids;	/* rels directly laterally referenced */
+	Relids		lateral_relids; /* minimum parameterization of rel */
+
+	/* information about a base rel (not set for join rels!) */
+	Index		relid;
+	Oid			reltablespace;	/* containing tablespace */
+	RTEKind		rtekind;		/* RELATION, SUBQUERY, or FUNCTION */
+	AttrNumber	min_attr;		/* smallest attrno of rel (often <0) */
+	AttrNumber	max_attr;		/* largest attrno of rel */
+	Relids	   *attr_needed;	/* array indexed [min_attr .. max_attr] */
+	int32	   *attr_widths;	/* array indexed [min_attr .. max_attr] */
+	List	   *lateral_vars;	/* LATERAL Vars and PHVs referenced by rel */
+	Relids		lateral_referencers;	/* rels that reference me laterally */
+	List	   *indexlist;		/* list of IndexOptInfo */
+	BlockNumber pages;			/* size estimates derived from pg_class */
+	double		tuples;
+	double		allvisfrac;
+	PlannerInfo *subroot;		/* if subquery */
+	List	   *subplan_params; /* if subquery */
+	int			rel_parallel_workers;	/* wanted number of parallel workers */
+
+	/* Information about foreign tables and foreign joins */
+	Oid			serverid;		/* identifies server for the table or join */
+	Oid			userid;			/* identifies user to check access as */
+	bool		useridiscurrent;	/* join is only valid for current user */
+	/* use "struct FdwRoutine" to avoid including fdwapi.h here */
+	struct FdwRoutine *fdwroutine;
+	void	   *fdw_private;
+
+	/* used by various scans and joins: */
+	List	   *baserestrictinfo;		/* RestrictInfo structures (if base
+										 * rel) */
+	QualCost	baserestrictcost;		/* cost of evaluating the above */
+	Index		baserestrict_min_security;		/* min security_level found in
+												 * baserestrictinfo */
+	List	   *joininfo;		/* RestrictInfo structures for join clauses
+								 * involving this rel */
+	bool		has_eclass_joins;		/* T means joininfo is incomplete */
+} RelOptInfo;
+
+
+5. RestrictInfo 表约束信息
+
+/*
+ * Restriction clause info.
+ *
+ * We create one of these for each AND sub-clause of a restriction condition
+ * (WHERE or JOIN/ON clause).  Since the restriction clauses are logically
+ * ANDed, we can use any one of them or any subset of them to filter out
+ * tuples, without having to evaluate the rest.  The RestrictInfo node itself
+ * stores data used by the optimizer while choosing the best query plan.
+ *
+ * If a restriction clause references a single base relation, it will appear
+ * in the baserestrictinfo list of the RelOptInfo for that base rel.
+ *
+ * If a restriction clause references more than one base rel, it will
+ * appear in the joininfo list of every RelOptInfo that describes a strict
+ * subset of the base rels mentioned in the clause.  The joininfo lists are
+ * used to drive join tree building by selecting plausible join candidates.
+ * The clause cannot actually be applied until we have built a join rel
+ * containing all the base rels it references, however.
+ *
+ * When we construct a join rel that includes all the base rels referenced
+ * in a multi-relation restriction clause, we place that clause into the
+ * joinrestrictinfo lists of paths for the join rel, if neither left nor
+ * right sub-path includes all base rels referenced in the clause.  The clause
+ * will be applied at that join level, and will not propagate any further up
+ * the join tree.  (Note: the "predicate migration" code was once intended to
+ * push restriction clauses up and down the plan tree based on evaluation
+ * costs, but it's dead code and is unlikely to be resurrected in the
+ * foreseeable future.)
+ *
+ * Note that in the presence of more than two rels, a multi-rel restriction
+ * might reach different heights in the join tree depending on the join
+ * sequence we use.  So, these clauses cannot be associated directly with
+ * the join RelOptInfo, but must be kept track of on a per-join-path basis.
+ *
+ * RestrictInfos that represent equivalence conditions (i.e., mergejoinable
+ * equalities that are not outerjoin-delayed) are handled a bit differently.
+ * Initially we attach them to the EquivalenceClasses that are derived from
+ * them.  When we construct a scan or join path, we look through all the
+ * EquivalenceClasses and generate derived RestrictInfos representing the
+ * minimal set of conditions that need to be checked for this particular scan
+ * or join to enforce that all members of each EquivalenceClass are in fact
+ * equal in all rows emitted by the scan or join.
+ *
+ * When dealing with outer joins we have to be very careful about pushing qual
+ * clauses up and down the tree.  An outer join's own JOIN/ON conditions must
+ * be evaluated exactly at that join node, unless they are "degenerate"
+ * conditions that reference only Vars from the nullable side of the join.
+ * Quals appearing in WHERE or in a JOIN above the outer join cannot be pushed
+ * down below the outer join, if they reference any nullable Vars.
+ * RestrictInfo nodes contain a flag to indicate whether a qual has been
+ * pushed down to a lower level than its original syntactic placement in the
+ * join tree would suggest.  If an outer join prevents us from pushing a qual
+ * down to its "natural" semantic level (the level associated with just the
+ * base rels used in the qual) then we mark the qual with a "required_relids"
+ * value including more than just the base rels it actually uses.  By
+ * pretending that the qual references all the rels required to form the outer
+ * join, we prevent it from being evaluated below the outer join's joinrel.
+ * When we do form the outer join's joinrel, we still need to distinguish
+ * those quals that are actually in that join's JOIN/ON condition from those
+ * that appeared elsewhere in the tree and were pushed down to the join rel
+ * because they used no other rels.  That's what the is_pushed_down flag is
+ * for; it tells us that a qual is not an OUTER JOIN qual for the set of base
+ * rels listed in required_relids.  A clause that originally came from WHERE
+ * or an INNER JOIN condition will *always* have its is_pushed_down flag set.
+ * It's possible for an OUTER JOIN clause to be marked is_pushed_down too,
+ * if we decide that it can be pushed down into the nullable side of the join.
+ * In that case it acts as a plain filter qual for wherever it gets evaluated.
+ * (In short, is_pushed_down is only false for non-degenerate outer join
+ * conditions.  Possibly we should rename it to reflect that meaning?)
+ *
+ * RestrictInfo nodes also contain an outerjoin_delayed flag, which is true
+ * if the clause's applicability must be delayed due to any outer joins
+ * appearing below it (ie, it has to be postponed to some join level higher
+ * than the set of relations it actually references).
+ *
+ * There is also an outer_relids field, which is NULL except for outer join
+ * clauses; for those, it is the set of relids on the outer side of the
+ * clause's outer join.  (These are rels that the clause cannot be applied to
+ * in parameterized scans, since pushing it into the join's outer side would
+ * lead to wrong answers.)
+ *
+ * There is also a nullable_relids field, which is the set of rels the clause
+ * references that can be forced null by some outer join below the clause.
+ *
+ * outerjoin_delayed = true is subtly different from nullable_relids != NULL:
+ * a clause might reference some nullable rels and yet not be
+ * outerjoin_delayed because it also references all the other rels of the
+ * outer join(s). A clause that is not outerjoin_delayed can be enforced
+ * anywhere it is computable.
+ *
+ * To handle security-barrier conditions efficiently, we mark RestrictInfo
+ * nodes with a security_level field, in which higher values identify clauses
+ * coming from less-trusted sources.  The exact semantics are that a clause
+ * cannot be evaluated before another clause with a lower security_level value
+ * unless the first clause is leakproof.  As with outer-join clauses, this
+ * creates a reason for clauses to sometimes need to be evaluated higher in
+ * the join tree than their contents would suggest; and even at a single plan
+ * node, this rule constrains the order of application of clauses.
+ *
+ * In general, the referenced clause might be arbitrarily complex.  The
+ * kinds of clauses we can handle as indexscan quals, mergejoin clauses,
+ * or hashjoin clauses are limited (e.g., no volatile functions).  The code
+ * for each kind of path is responsible for identifying the restrict clauses
+ * it can use and ignoring the rest.  Clauses not implemented by an indexscan,
+ * mergejoin, or hashjoin will be placed in the plan qual or joinqual field
+ * of the finished Plan node, where they will be enforced by general-purpose
+ * qual-expression-evaluation code.  (But we are still entitled to count
+ * their selectivity when estimating the result tuple count, if we
+ * can guess what it is...)
+ *
+ * When the referenced clause is an OR clause, we generate a modified copy
+ * in which additional RestrictInfo nodes are inserted below the top-level
+ * OR/AND structure.  This is a convenience for OR indexscan processing:
+ * indexquals taken from either the top level or an OR subclause will have
+ * associated RestrictInfo nodes.
+ *
+ * The can_join flag is set true if the clause looks potentially useful as
+ * a merge or hash join clause, that is if it is a binary opclause with
+ * nonoverlapping sets of relids referenced in the left and right sides.
+ * (Whether the operator is actually merge or hash joinable isn't checked,
+ * however.)
+ *
+ * The pseudoconstant flag is set true if the clause contains no Vars of
+ * the current query level and no volatile functions.  Such a clause can be
+ * pulled out and used as a one-time qual in a gating Result node.  We keep
+ * pseudoconstant clauses in the same lists as other RestrictInfos so that
+ * the regular clause-pushing machinery can assign them to the correct join
+ * level, but they need to be treated specially for cost and selectivity
+ * estimates.  Note that a pseudoconstant clause can never be an indexqual
+ * or merge or hash join clause, so it's of no interest to large parts of
+ * the planner.
+ *
+ * When join clauses are generated from EquivalenceClasses, there may be
+ * several equally valid ways to enforce join equivalence, of which we need
+ * apply only one.  We mark clauses of this kind by setting parent_ec to
+ * point to the generating EquivalenceClass.  Multiple clauses with the same
+ * parent_ec in the same join are redundant.
+ */
+
+typedef struct RestrictInfo
+{
+	NodeTag		type;
+
+	Expr	   *clause;			/* the represented clause of WHERE or JOIN */
+
+	bool		is_pushed_down; /* TRUE if clause was pushed down in level */
+
+	bool		outerjoin_delayed;		/* TRUE if delayed by lower outer join */
+
+	bool		can_join;		/* see comment above */
+
+	bool		pseudoconstant; /* see comment above */
+
+	bool		leakproof;		/* TRUE if known to contain no leaked Vars */
+
+	Index		security_level; /* see comment above */
+
+	/* The set of relids (varnos) actually referenced in the clause: */
+	Relids		clause_relids;
+
+	/* The set of relids required to evaluate the clause: */
+	Relids		required_relids;
+
+	/* If an outer-join clause, the outer-side relations, else NULL: */
+	Relids		outer_relids;
+
+	/* The relids used in the clause that are nullable by lower outer joins: */
+	Relids		nullable_relids;
+
+	/* These fields are set for any binary opclause: */
+	Relids		left_relids;	/* relids in left side of clause */
+	Relids		right_relids;	/* relids in right side of clause */
+
+	/* This field is NULL unless clause is an OR clause: */
+	Expr	   *orclause;		/* modified clause with RestrictInfos */
+
+	/* This field is NULL unless clause is potentially redundant: */
+	EquivalenceClass *parent_ec;	/* generating EquivalenceClass */
+
+	/* cache space for cost and selectivity */
+	QualCost	eval_cost;		/* eval cost of clause; -1 if not yet set */
+	Selectivity norm_selec;		/* selectivity for "normal" (JOIN_INNER)
+								 * semantics; -1 if not yet set; >1 means a
+								 * redundant clause */
+	Selectivity outer_selec;	/* selectivity for outer join semantics; -1 if
+								 * not yet set */
+
+	/* valid if clause is mergejoinable, else NIL */
+	List	   *mergeopfamilies;	/* opfamilies containing clause operator */
+
+	/* cache space for mergeclause processing; NULL if not yet set */
+	EquivalenceClass *left_ec;	/* EquivalenceClass containing lefthand */
+	EquivalenceClass *right_ec; /* EquivalenceClass containing righthand */
+	EquivalenceMember *left_em; /* EquivalenceMember for lefthand */
+	EquivalenceMember *right_em;	/* EquivalenceMember for righthand */
+	List	   *scansel_cache;	/* list of MergeScanSelCache structs */
+
+	/* transient workspace for use while considering a specific join path */
+	bool		outer_is_left;	/* T = outer var on left, F = on right */
+
+	/* valid if clause is hashjoinable, else InvalidOid: */
+	Oid			hashjoinoperator;		/* copy of clause operator */
+
+	/* cache space for hashclause processing; -1 if not yet set */
+	Selectivity left_bucketsize;	/* avg bucketsize of left side */
+	Selectivity right_bucketsize;		/* avg bucketsize of right side */
+} RestrictInfo;
+
+
+6. Path 查询路径信息
+
+/*
+ * Type "Path" is used as-is for sequential-scan paths, as well as some other
+ * simple plan types that we don't need any extra information in the path for.
+ * For other path types it is the first component of a larger struct.
+ *
+ * "pathtype" is the NodeTag of the Plan node we could build from this Path.
+ * It is partially redundant with the Path's NodeTag, but allows us to use
+ * the same Path type for multiple Plan types when there is no need to
+ * distinguish the Plan type during path processing.
+ *
+ * "parent" identifies the relation this Path scans, and "pathtarget"
+ * describes the precise set of output columns the Path would compute.
+ * In simple cases all Paths for a given rel share the same targetlist,
+ * which we represent by having path->pathtarget equal to parent->reltarget.
+ *
+ * "param_info", if not NULL, links to a ParamPathInfo that identifies outer
+ * relation(s) that provide parameter values to each scan of this path.
+ * That means this path can only be joined to those rels by means of nestloop
+ * joins with this path on the inside.  Also note that a parameterized path
+ * is responsible for testing all "movable" joinclauses involving this rel
+ * and the specified outer rel(s).
+ *
+ * "rows" is the same as parent->rows in simple paths, but in parameterized
+ * paths and UniquePaths it can be less than parent->rows, reflecting the
+ * fact that we've filtered by extra join conditions or removed duplicates.
+ *
+ * "pathkeys" is a List of PathKey nodes (see above), describing the sort
+ * ordering of the path's output rows.
+ */
+typedef struct Path
+{
+	NodeTag		type;
+
+	NodeTag		pathtype;		/* tag identifying scan/join method */
+
+	RelOptInfo *parent;			/* the relation this path can build */
+	PathTarget *pathtarget;		/* list of Vars/Exprs, cost, width */
+
+	ParamPathInfo *param_info;	/* parameterization info, or NULL if none */
+
+	bool		parallel_aware; /* engage parallel-aware logic? */
+	bool		parallel_safe;	/* OK to use as part of parallel plan? */
+	int			parallel_workers;		/* desired # of workers; 0 = not
+										 * parallel */
+
+	/* estimated size/costs for path (see costsize.c for more info) */
+	double		rows;			/* estimated number of result tuples */
+	Cost		startup_cost;	/* cost expended before fetching any tuples */
+	Cost		total_cost;		/* total cost (assuming all tuples fetched) */
+
+	List	   *pathkeys;		/* sort ordering of path's output */
+	/* pathkeys is a List of PathKey nodes; see above */
+} Path;
+
+7. Plan 执行计划信息
+/* ----------------
+ *		Plan node
+ *
+ * All plan nodes "derive" from the Plan structure by having the
+ * Plan structure as the first field.  This ensures that everything works
+ * when nodes are cast to Plan's.  (node pointers are frequently cast to Plan*
+ * when passed around generically in the executor)
+ *
+ * We never actually instantiate any Plan nodes; this is just the common
+ * abstract superclass for all Plan-type nodes.
+ * ----------------
+ */
+typedef struct Plan
+{
+	NodeTag		type;
+
+	/*
+	 * estimated execution costs for plan (see costsize.c for more info)
+	 */
+	Cost		startup_cost;	/* cost expended before fetching any tuples */
+	Cost		total_cost;		/* total cost (assuming all tuples fetched) */
+
+	/*
+	 * planner's estimate of result size of this plan step
+	 */
+	double		plan_rows;		/* number of rows plan is expected to emit */
+	int			plan_width;		/* average row width in bytes */
+
+	/*
+	 * information needed for parallel query
+	 */
+	bool		parallel_aware; /* engage parallel-aware logic? */
+
+	/*
+	 * Common structural data for all Plan types.
+	 */
+	int			plan_node_id;	/* unique across entire final plan tree */
+	List	   *targetlist;		/* target list to be computed at this node */
+	List	   *qual;			/* implicitly-ANDed qual conditions */
+	struct Plan *lefttree;		/* input plan tree(s) */
+	struct Plan *righttree;
+	List	   *initPlan;		/* Init Plan nodes (un-correlated expr
+								 * subselects) */
+
+	/*
+	 * Information for management of parameter-change-driven rescanning
+	 *
+	 * extParam includes the paramIDs of all external PARAM_EXEC params
+	 * affecting this plan node or its children.  setParam params from the
+	 * node's initPlans are not included, but their extParams are.
+	 *
+	 * allParam includes all the extParam paramIDs, plus the IDs of local
+	 * params that affect the node (i.e., the setParams of its initplans).
+	 * These are _all_ the PARAM_EXEC params that affect this node.
+	 */
+	Bitmapset  *extParam;
+	Bitmapset  *allParam;
+} Plan;
 
 
 
