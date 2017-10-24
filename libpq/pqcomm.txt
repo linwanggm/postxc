@@ -1,0 +1,5 @@
+最近在修改adbmgr 框架中节点类型定义，去除原设定的一个节点类型，结果改动了很多地方，用了很大力气去梳理逻辑及验证测试，说明在设计框架结构时
+必须尽量多的考虑可能存在的变动，程序编写时也要考虑灵活扩展性。
+
+learn pqcomm.c
+//Communication functions between the Frontend and the Backend
