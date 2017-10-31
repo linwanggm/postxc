@@ -1,0 +1,18 @@
+1. split string to list
+SplitIdentifierString
+	/* Parse string into list of identifiers */
+	if (!SplitIdentifierString(rawstring, ',', &elemlist))
+	
+2.  compute_modulo
+static int
+compute_modulo(unsigned int numerator, unsigned int denominator)
+
+3. compute_hash
+Datum
+compute_hash(Oid type, Datum value, char locator)
+
+深入理解Oracle表(5)：三大表连接方式详解之Hash Join的定义，原理，算法，成本，模式和位图
+http://blog.csdn.net/wind520/article/details/42914041
+
+
+
