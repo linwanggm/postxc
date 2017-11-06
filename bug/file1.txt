@@ -1,0 +1,34 @@
+阅读postgres-xl源码发现有一些结构体或者链表（内部申请了动态内存）在使用过后没有释放，举例如下：
+
+GetLocatorType ：：该函数没释放里面用到的变量内存（这种类似在pgxl中很多）
+char GetLocatorType(Oid relid)
+{
+	char		ret = '\0';
+
+	RelationLocInfo *ret_loc_info = GetRelationLocInfo(relid);  --里面申请了内存
+
+	if (ret_loc_info != NULL)
+		ret = ret_loc_info->locatorType;
+
+	return ret;
+}
+
+链表 GetAllDataNodes()在使用完后没释放
+/*
+ * Return a list of all Datanodes.
+ * We assume all tables use all nodes in the prototype, so just return a list
+ * from first one.
+ */
+List *
+GetAllDataNodes(void)
+{
+	int			i;
+	List	   *nodeList = NIL;
+
+	for (i = 0; i < NumDataNodes; i++)
+		nodeList = lappend_int(nodeList, i);
+
+	return nodeList;
+}
+
+函数 List *GetAllCoordNodes(void) 这个也是有这个问题， 使用完后没释放
