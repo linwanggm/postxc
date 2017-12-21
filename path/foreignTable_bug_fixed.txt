@@ -1,0 +1,310 @@
+基于postgres-xc分布式数据库antdb, 从内核pg9.3升级到pg9.6后，外部表新增了继承特性即外部表可以作为普通表的子表，但是查询还有子表为外部表的普通表时，出现
+查询错误，直接连接会被close掉。复现sql语句如下：
+CREATE EXTENSION postgres_fdw;
+
+CREATE SERVER testserver1 FOREIGN DATA WRAPPER postgres_fdw;
+DO $d$
+    BEGIN
+        EXECUTE $$CREATE SERVER loopback FOREIGN DATA WRAPPER postgres_fdw
+            OPTIONS (dbname '$$||current_database()||$$',
+                     port '$$||current_setting('port')||$$'
+            )$$; 
+        EXECUTE $$CREATE SERVER loopback2 FOREIGN DATA WRAPPER postgres_fdw
+            OPTIONS (dbname '$$||current_database()||$$',
+                     port '$$||current_setting('port')||$$'
+            )$$; 
+    END; 
+$d$;
+
+CREATE USER MAPPING FOR public SERVER testserver1
+        OPTIONS (user 'value', password 'value');
+CREATE USER MAPPING FOR CURRENT_USER SERVER loopback;
+CREATE USER MAPPING FOR CURRENT_USER SERVER loopback2;
+
+create table loct1 (f1 int, f2 int, f3 int);
+create table loct2 (f1 int, f2 int, f3 int);
+
+
+create table bar (f1 int, f2 int);
+create foreign table bar2 (f3 int) inherits (bar)
+  server loopback options (table_name 'loct2');
+
+
+insert into bar values(1,11);
+insert into bar values(2,22);
+insert into bar values(6,66);
+insert into bar2 values(3,33,33);
+insert into bar2 values(4,44,44);
+insert into bar2 values(7,77,77);
+
+
+create table foo (f1 int, f2 int);
+create foreign table foo2 (f3 int) inherits (foo)
+  server loopback options (table_name 'loct1');
+
+insert into foo values(1,1);
+insert into foo values(3,3);
+insert into foo2 values(2,2,2);
+insert into foo2 values(4,4,4);
+
+查询表bar语句执行计划如下：
+testdb1=# explain verbose select * from bar;
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Data Node Scan on "__REMOTE_FQS_QUERY__"  (cost=0.00..0.00 rows=0 width=0)
+   Output: bar.f1, bar.f2
+   Primary node/s: dn3
+   Node/s: dn1, dn2, dn3
+   Remote query: SELECT f1, f2 FROM public.bar bar
+(5 rows)
+
+而在postgres9.6上执行没问题，执行计划如下：
+testdb1=# explain verbose select * from bar;
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Append  (cost=0.00..190.06 rows=2786 width=8)
+   ->  Seq Scan on public.bar  (cost=0.00..3.26 rows=226 width=8)
+         Output: bar.f1, bar.f2
+   ->  Foreign Scan on public.bar2  (cost=100.00..186.80 rows=2560 width=8)
+         Output: bar2.f1, bar2.f2
+         Remote SQL: SELECT f1, f2 FROM public.loct2
+(6 rows)
+
+从上面可知，表bar是普通表，还有子表bar2为外部表。由于外部表数据获取只能在coordinator上获取，datanode节点上无外部表数据。所以正常的执行计划是扫描bar
+内部数据 然后 append上外部表bar2的数据。而现在错误的执行计划是直接下发了语句到datanode上去执行（coordinator最后gather所有datanode返回的数据），执行
+方式走的是FQS。 那么问题初步判断出现在执行计划生成方式上，不应该走FQS。
+
+正确的执行计划生成时，加上断点debug,堆栈信息如下：
+#0  ExecAppend (node=0x2e55778) at nodeAppend.c:234
+#1  0x0000000000682609 in ExecProcNode (node=0x2e55778) at execProcnode.c:400
+#2  0x000000000067e9d3 in ExecutePlan (estate=0x2e55660, planstate=0x2e55778, use_parallel_mode=0 '\000', operation=CMD_SELECT, sendTuples=1 '\001', numberTuples=0,
+    direction=ForwardScanDirection, dest=0x2e51e60) at execMain.c:1569
+#3  0x000000000067ca08 in standard_ExecutorRun (queryDesc=0x2dcb230, direction=ForwardScanDirection, count=0) at execMain.c:338
+#4  0x000000000067c87c in ExecutorRun (queryDesc=0x2dcb230, direction=ForwardScanDirection, count=0) at execMain.c:286
+#5  0x0000000000823fbe in PortalRunSelect (portal=0x2e4d1e0, forward=1 '\001', count=0, dest=0x2e51e60) at pquery.c:948
+#6  0x0000000000823c48 in PortalRun (portal=0x2e4d1e0, count=9223372036854775807, isTopLevel=1 '\001', dest=0x2e51e60, altdest=0x2e51e60,
+    completionTag=0x7ffc4ba198d0 "") at pquery.c:789
+#7  0x000000000081de27 in exec_simple_query (query_string=0x2e24510 "select * from bar;") at postgres.c:1086
+#8  0x0000000000821fb9 in PostgresMain (argc=1, argv=0x2dcf1f0, dbname=0x2dcf058 "testdb1", username=0x2dcf038 "wln") at postgres.c:4074
+#9  0x0000000000796670 in BackendRun (port=0x2dc97b0) at postmaster.c:4294
+#10 0x0000000000795ddb in BackendStartup (port=0x2dc97b0) at postmaster.c:3968
+#11 0x000000000079244a in ServerLoop () at postmaster.c:1719
+#12 0x0000000000791b0e in PostmasterMain (argc=3, argv=0x2da2070) at postmaster.c:1327
+#13 0x00000000006da32e in main (argc=3, argv=0x2da2070) at main.c:228
+
+那么问题时上面堆栈哪个函数引起的呢？也就是哪个函数内部实际包含了执行计划生成呢？通过debug调试发现，在函数PortalRun函数时，portal结构体中已经包含了
+执行计划Append信息，那么执行计划生成的部分包含在exec_simple_query函数内。
+
+          函数调用流程图
+           main
+           PostmasterMain
+           ServerLoop
+           BackendStartup
+           BackendRun
+           PostgresMain
+           exec_simple_query        buildCachePlan          execute_sql_string
+           pg_plan_queries            explainOneQuery     execCreateTableAs   beginCopy
+           pg_plan_query
+           planner
+           pgxc_planner        (*planner_hook)                       standard_planner
+           pgxc_handle_exec_direct                       pgxc_FQS_planner        standard_planner
+
+这个是内部函数执行流程图。那么出错的执行计划是这样走的：
+exec_simple_query -> pg_plan_queries  -> pg_plan_query -> planner ->pgxc_planner  -> pgxc_FQS_planner
+
+经测试发现，若不走pgxc_FQS_planner而去走standard_planner时，能够得到正确的结果。也就是对于含有外部表作为子表的sql 语句时，不应该走FQS，
+而应该走标准执行计划生成函数standard_planner。
+正常的查询计划生成pg9.6代码流程如下：
+  pg_plan_queries下
+ 
+ stmt = (Node *) pg_plan_query(query, cursorOptions, boundParams)
+ plan = planner(querytree, cursorOptions, boundParams);
+ result = standard_planner(parse, cursorOptions, boundParams);
+ 
+ standard_planner
+ root = subquery_planner(glob, parse, NULL,   
+ subquery_planner  下的
+ expand_inherited_tables
+ 
+ expand_inherited_rtentry   函数下
+ inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);
+ 
+ 对出错的antdb调试过程中信息如下：
+ adb31
+(gdb) b pg_plan_query
+Breakpoint 3 at 0xa449a3: file /home/wln/adb31/src/backend/tcop/postgres.c, line 1031.
+(gdb) p query
+$1 = (Query *) 0x2d7b878
+(gdb) p *query
+$2 = {type = T_Query, commandType = CMD_SELECT, querySource = QSRC_ORIGINAL, queryId = 0, canSetTag = 1 '\001', utilityStmt = 0x0, resultRelation = 0,
+  hasAggs = 0 '\000', hasWindowFuncs = 0 '\000', hasSubLinks = 0 '\000', hasDistinctOn = 0 '\000', hasRecursive = 0 '\000', hasModifyingCTE = 0 '\000',
+  hasForUpdate = 0 '\000', hasRowSecurity = 0 '\000', cteList = 0x0, rtable = 0x2d7c100, jointree = 0x2d7c590, targetList = 0x2d7c4b8, onConflict = 0x0,
+  returningList = 0x0, groupClause = 0x0, groupingSets = 0x0, havingQual = 0x0, windowClause = 0x0, distinctClause = 0x0, sortClause = 0x0, limitOffset = 0x0,
+  limitCount = 0x0, rowMarks = 0x0, setOperations = 0x0, constraintDeps = 0x0, withCheckOptions = 0x0, sql_statement = 0x2d7c6e0 "select * from bar;",
+  is_local = 0 '\000', has_to_save_cmd_id = 0 '\000', in_sub_plan = 0 '\000'}
+  
+下面是分析如何解决这个问题：
+问题解决方式为：判断该表有继承表 且 继承表为外部表时，不再走 pgxc_planner 函数，而去走 standard_planner 函数
+找到这个表的oid
+expand_inherited_rtentry 函数中
+parentOID = rte->relid;   RangeTblEntry *rte
+
+expand_inherited_tables 函数中
+nrtes = list_length(root->parse->rtable);
+rl = list_head(root->parse->rtable);
+for (rti = 1; rti <= nrtes; rti++)
+{
+	RangeTblEntry *rte = (RangeTblEntry *) lfirst(rl);
+
+	expand_inherited_rtentry(root, rte, rti);
+	rl = lnext(rl);
+}
+
+PlannerInfo *root, 去找root 
+
+subquery_planner 函数中
+root->parse = parse;  去找 Query *parse
+
+来自函数standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
+
+那么 步骤 1
+
+nrtes = list_length(parse->rtable);
+rl = list_head(parse->rtable);
+for (rti = 1; rti <= nrtes; rti++)
+{
+	RangeTblEntry *rte = (RangeTblEntry *) lfirst(rl);
+  parentOID = rte->relid;
+	List	   *inhOIDs;
+	
+	oldrc = get_plan_rowmark(NIL, rti);
+	if (rti == parse->resultRelation)
+		lockmode = RowExclusiveLock;
+	else if (oldrc && RowMarkRequiresRowShareLock(oldrc->markType))
+		lockmode = RowShareLock;
+	else
+		lockmode = AccessShareLock;
+
+	/* Scan for all members of inheritance set, acquire needed locks */
+	inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);  --根据这个inhOIDs 判断是否为外表
+	
+	rl = lnext(rl);
+}
+
+Relation	rt_entry_relation;
+rt_entry_relation = heap_open(rt_entry->relid, NoLock);
+relation->rd_rel->relkind == RELKIND_FOREIGN_TABLE
+
+bool  =  IsRelationReplicated(RelationGetLocInfo(target_relation));
+heap_close(rt_entry_relation, NoLock);
+
+
+如何查看一个表中有继承表
+expand_inherited_rtentry
+函数中 
+	oldrc = get_plan_rowmark(root->rowMarks, rti);
+	if (rti == parse->resultRelation)
+		lockmode = RowExclusiveLock;
+	else if (oldrc && RowMarkRequiresRowShareLock(oldrc->markType))
+		lockmode = RowShareLock;
+	else
+		lockmode = AccessShareLock;
+
+	/* Scan for all members of inheritance set, acquire needed locks */
+	inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);
+  
+ 
+ 
+ 
+ bug fixed 代码修改如下：
+ /*
+ * pgxc_is_query_shippable
+ * This function calls the query walker to analyse the query to gather
+ * information like  Constraints under which the query can be shippable, nodes
+ * on which the query is going to be executed etc.
+ * Based on the information gathered, it decides whether the query can be
+ * executed on Datanodes directly without involving Coordinator.
+ * If the query is shippable this routine also returns the nodes where the query
+ * should be shipped. If the query is not shippable, it returns NULL.
+ */
+ExecNodes *
+pgxc_is_query_shippable(Query *query, int query_level)
+
+在该函数下做如下修改：
+添加内容为：
+/*
+	* Check the relation have inherited foreign tables, if have, return NULL
+	*
+	*/
+	nrtes = list_length(query->rtable);
+	rl = list_head(query->rtable);
+	for (rti = 1; rti <= nrtes; rti++)
+	{
+		RangeTblEntry *rte = (RangeTblEntry *) lfirst(rl);
+		parentOID = rte->relid;
+		List		*inhOIDs;
+		PlanRowMark *oldrc = NULL;
+		LOCKMODE	lockmode;
+		if (parentOID == InvalidOid)
+			return NULL;
+		
+		if (rti == query->resultRelation)
+			lockmode = RowExclusiveLock;
+		else if (oldrc && RowMarkRequiresRowShareLock(oldrc->markType))
+			lockmode = RowShareLock;
+		else
+			lockmode = AccessShareLock;
+
+		/* Scan for all members of inheritance set, acquire needed locks */
+
+		inhOIDs = find_all_inheritors(parentOID, lockmode, NULL);
+		foreach(l, inhOIDs)
+		{
+			Relation	newrelation;
+			Oid			childOID = lfirst_oid(l);
+			if (childOID == parentOID)
+				continue;
+			newrelation = heap_open(childOID, NoLock);
+			if (!RelationIsValid(newrelation))
+				continue;
+			if (newrelation->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
+			{
+				heap_close(newrelation, NoLock);
+				return NULL;
+			}
+			heap_close(newrelation, NoLock);
+		}
+
+		rl = lnext(rl);
+	}
+
+修改后测试说明：
+其中语句if (parentOID == InvalidOid)  return NULL;是测试后加的。  没加时测试发现问题：\d时无法显示表，报oid=0的表无法找到，直接在报错处加断言，出现堆栈信息如下：
+#0  0x0000003991632495 in raise () from /lib64/libc.so.6
+#1  0x0000003991633c75 in abort () from /lib64/libc.so.6
+#2  0x0000000000c13ca9 in ExceptionalCondition (conditionName=0xcea3ba "!(1==2)", errorType=0xc8cb13 "FailedAssertion",
+    fileName=0xcea3c2 "/home/wln/adb31/src/backend/catalog/pg_inherits.c", lineNumber=251) at /home/wln/adb31/src/backend/utils/error/assert.c:54
+#3  0x00000000005e359c in has_subclass (relationId=0) at /home/wln/adb31/src/backend/catalog/pg_inherits.c:251
+#4  0x00000000005e3281 in find_inheritance_children (parentrelId=0, lockmode=1) at /home/wln/adb31/src/backend/catalog/pg_inherits.c:66
+#5  0x00000000005e36a2 in find_all_inheritors (parentrelId=0, lockmode=1, numparents=0x0) at /home/wln/adb31/src/backend/catalog/pg_inherits.c:182
+#6  0x00000000009581af in pgxc_is_query_shippable (query=0x2128690, query_level=0) at /home/wln/adb31/src/backend/optimizer/util/pgxcship.c:1404
+#7  0x000000000092859e in pgxc_FQS_planner (query=0x2128690, cursorOptions=256, boundParams=0x0) at /home/wln/adb31/src/backend/optimizer/plan/pgxcplan.c:2687
+#8  0x00000000009281fb in pgxc_planner (query=0x2128690, cursorOptions=256, boundParams=0x0) at /home/wln/adb31/src/backend/optimizer/plan/pgxcplan.c:2469
+#9  0x000000000090bc27 in planner (parse=0x2128690, cursorOptions=256, boundParams=0x0) at /home/wln/adb31/src/backend/optimizer/plan/planner.c:270
+#10 0x0000000000a44bbd in pg_plan_query (querytree=0x2128690, cursorOptions=256, boundParams=0x0) at /home/wln/adb31/src/backend/tcop/postgres.c:1043
+#11 0x0000000000a44c9d in pg_plan_queries (querytrees=0x21397d8, cursorOptions=256, boundParams=0x0) at /home/wln/adb31/src/backend/tcop/postgres.c:1102
+#12 0x0000000000a48348 in exec_simple_query (
+    query_string=0x20bc7e8 "SELECT n.nspname as \"Schema\",\n  c.relname as \"Name\",\n  CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' WHEN '"..., query_node=0x0) at /home/wln/adb31/src/backend/tcop/postgres.c:1406
+#13 0x0000000000a4713e in PostgresMain (argc=1, argv=0x2059a60, dbname=0x20598c0 "postgres", username=0x20598a0 "wln")
+    at /home/wln/adb31/src/backend/tcop/postgres.c:4780
+#14 0x000000000099199d in BackendRun (port=0x20541b0) at /home/wln/adb31/src/backend/postmaster/postmaster.c:4634
+#15 0x0000000000990fb4 in BackendStartup (port=0x20541b0) at /home/wln/adb31/src/backend/postmaster/postmaster.c:4308
+#16 0x000000000098d3ac in ServerLoop () at /home/wln/adb31/src/backend/postmaster/postmaster.c:1848
+#17 0x000000000098a65c in PostmasterMain (argc=5, argv=0x202d640) at /home/wln/adb31/src/backend/postmaster/postmaster.c:1456
+#18 0x00000000007e8398 in main (argc=5, argv=0x202d640) at /home/wln/adb31/src/backend/main/main.c:228
+
+
+可知，确实在我们修改的地方出现了错误，所以必须对oid=0进行处理。
+
+
+
