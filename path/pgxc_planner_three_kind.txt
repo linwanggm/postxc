@@ -1,0 +1,128 @@
+函数调用流程图
+           main
+           PostmasterMain
+           ServerLoop
+           BackendStartup
+           BackendRun
+           PostgresMain
+            exec_simple_query        buildCachePlan          execute_sql_string
+            pg_plan_queries            explainOneQuery     execCreateTableAs   beginCopy
+            pg_plan_query
+            planner
+            pgxc_planner        (*planner_hook)                       standard_planner
+            pgxc_handle_exec_direct                       pgxc_FQS_planner        standard_planner
+ 
+
+
+/*
+ * Build up a QueryPlan to execute on.
+ *
+ * This functions tries to find out whether
+ * 1. The statement can be shipped to the Datanode and Coordinator is needed
+ *    only as a proxy - in which case, it creates a single node plan.
+ * 2. The statement can be evaluated on the Coordinator completely - thus no
+ *    query shipping is involved and standard_planner() is invoked to plan the
+ *    statement
+ * 3. The statement needs Coordinator as well as Datanode for evaluation -
+ *    again we use standard_planner() to plan the statement.
+ *
+ * The plan generated in either of the above cases is returned.
+ */
+PlannedStmt *
+pgxc_planner(Query *query, int cursorOptions, ParamListInfo boundParams)
+{
+	PlannedStmt *result;
+
+	/* handle the un-supported statements, obvious errors etc. */
+	pgxc_handle_unsupported_stmts(query);
+
+	result = pgxc_handle_exec_direct(query, cursorOptions, boundParams);
+	if (result)
+		return result;
+
+	/* see if can ship the query completely */
+	result = pgxc_FQS_planner(query, cursorOptions, boundParams);
+	if (result)
+		return result;
+
+	/* we need Coordinator for evaluation, invoke standard planner */
+	result = standard_planner(query, cursorOptions, boundParams);
+	return result;
+}
+
+
+
+源码位置：pgxcplan.c
+函数：pgxc_FQS_planner
+/*
+ * pgxc_FQS_planner
+ * The routine tries to see if the statement can be completely evaluated on the
+ * Datanodes. In such cases Coordinator is not needed to evaluate the statement,
+ * and just acts as a proxy. A statement can be completely shipped to the remote
+ * node if every row of the result can be evaluated on a single Datanode.
+ * For example:
+ *
+ * 1. SELECT * FROM tab1; where tab1 is a distributed table - Every row of the
+ * result set can be evaluated at a single Datanode. Hence this statement is
+ * completely shippable even though many Datanodes are involved in evaluating
+ * complete result set. In such case Coordinator will be able to gather rows
+ * arisign from individual Datanodes and proxy the result to the client.
+ *
+ * 2. SELECT count(*) FROM tab1; where tab1 is a distributed table - there is
+ * only one row in the result but it needs input from all the Datanodes. Hence
+ * this is not completely shippable.
+ *
+ * 3. SELECT count(*) FROM tab1; where tab1 is replicated table - since result
+ * can be obtained from a single Datanode, this is a completely shippable
+ * statement.
+ *
+ * fqs in the name of function is acronym for fast query shipping.
+ */
+
+
+
+
+postgres=# explain verbose select * from t1;
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Data Node Scan on "__REMOTE_FQS_QUERY__"  (cost=0.00..0.00 rows=0 width=0)
+   Output: t1.id
+   Primary node/s: dn3
+   Node/s: dn1, dn2, dn3
+   Remote query: SELECT id FROM public.t1 t1
+(5 rows)
+
+postgres=# explain verbose select count(*) from t1;
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Aggregate  (cost=2311.38..2311.39 rows=1 width=8)
+   Output: count(*)
+   ->  Data Node Scan on t1 "_REMOTE_TABLE_QUERY_"  (cost=0.00..2305.00 rows=2550 width=0)
+         Primary node/s: dn3
+         Node/s: dn1, dn2, dn3
+         Remote query: SELECT * FROM ONLY public.t1 t1 WHERE true
+(6 rows)
+
+postgres=# create table t2(id int) distribute by replication;
+CREATE TABLE
+postgres=# insert into t2 select generate_series(1,10);
+INSERT 0 10
+postgres=# explain verbose select * from t2;
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Data Node Scan on "__REMOTE_FQS_QUERY__"  (cost=0.00..0.00 rows=0 width=0)
+   Output: t2.id
+   Node/s: dn1
+   Remote query: SELECT id FROM public.t2 t2
+(4 rows)
+
+postgres=# explain verbose select count(*) from t2;
+                                 QUERY PLAN                                 
+----------------------------------------------------------------------------
+ Data Node Scan on "__REMOTE_FQS_QUERY__"  (cost=0.00..0.00 rows=0 width=0)
+   Output: (count(*))
+   Node/s: dn1
+   Remote query: SELECT count(*) AS count FROM public.t2 t2
+(4 rows)
+
+
