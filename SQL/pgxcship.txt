@@ -1,0 +1,34 @@
+阅读源码pgxcship.c
+函数：
+
+/*
+ * Set the given reason in Shippability_context indicating why the query can not be
+ * shipped directly to remote nodes.
+ */
+static void pgxc_set_shippability_reason(Shippability_context *context, ShippabilityStat reason)
+：：根据给定的reason(枚举类型)，判断是否可以FQS，结果保存在context->sc_shippability,用到了bitmap知识。
+
+/*
+ * pgxc_reset_shippability_reason
+ * Reset reason why the query cannot be shipped to remote nodes
+ */
+static void pgxc_reset_shippability_reason(Shippability_context *context, ShippabilityStat reason)
+：：简单理解就是对bitmap指定位重置为0操作
+
+/*
+ * See if a given reason is why the query can not be shipped directly
+ * to the remote nodes.
+ */
+static bool
+pgxc_test_shippability_reason(Shippability_context *context, ShippabilityStat reason)
+：：对bitmap位进行数值判断
+
+/*
+ * pgxc_set_exprtype_shippability
+ * Set the expression type shippability. For now composite types
+ * derived from view definitions are not shippable.
+ */
+static void
+pgxc_set_exprtype_shippability(Oid exprtype, Shippability_context *sc_context)
+：：根据给定的exprtype即type类型，判断是否可以为FQS
+
