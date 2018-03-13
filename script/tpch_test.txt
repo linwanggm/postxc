@@ -2,6 +2,13 @@
 https://github.com/greenplum-db/gpdb/issues/3557
 
 tpch 来自：2.17.3 http://www.tpc.org/tpc_documents_current_versions/current_specifications.asp
+dbgen 可执行文件生成：将makefile*文件重命名为makefile, 修改里面内容：
+CC      = gcc
+ATABASE= ORACLE
+MACHINE = LINUX
+WORKLOAD = TPCH
+然后执行make 即可生成dbgen文件
+
 数据生成：./degen -s N (N为float类型)
 构造出的数据文件每行最后都有分隔符，不符合greenplum数据格式，需要做处理：
 //deal.c
