@@ -1,2 +1,46 @@
 位置 src/backend/pgxc/pool/pgxcnode.c
 代码逻辑清晰，对理解coordinator, datanode, gtm 之间通信内容有助于较好理解。
+
+在分布式数据库中，根据分片键将不同的数据值根据hash算法存储在不同的数据节点上，那么这个hash分布是如何决定不同的分片键值存放在具体的节点上的？
+见函数
+ExecNodes *
+GetRelationNodes(RelationLocInfo *rel_loc_info,
+				 int nelems,
+				 Datum* dist_col_values,
+				 bool* dist_col_nulls,
+				 Oid* dist_col_types,
+				 RelationAccessType accessType)
+{
+     ......
+         
+		case LOCATOR_TYPE_HASH:
+		case LOCATOR_TYPE_MODULO:
+			{
+				bool isValueNull = dist_col_nulls[0];
+
+				Assert(nelems == 1);
+
+				if (!isValueNull)
+				{
+					if(enable_slot) --此处为平滑扩容用的方法
+					{
+            hashValue = compute_hash(dist_col_types[0], dist_col_values[0],
+                           rel_loc_info->locatorType);
+            modulo = compute_modulo(labs(hashValue), SLOTSIZE);
+            SlotGetInfo(modulo, &nodeIndex, &slotstatus);
+            exec_nodes->nodeList = list_make1_int(nodeIndex);
+					}
+					else
+					{
+					hashValue = compute_hash(dist_col_types[0], dist_col_values[0],
+											 rel_loc_info->locatorType);
+					modulo = compute_modulo(labs(hashValue), list_length(rel_loc_info->nodeList));
+					nodeIndex = get_node_from_modulo(modulo, rel_loc_info->nodeList);
+					exec_nodes->nodeList = list_make1_int(nodeIndex);
+					}
+				}
+        
+        
+        
+        ......
+}
