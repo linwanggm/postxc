@@ -79,6 +79,14 @@ typedef struct ItemIdData
 				lp_len:15;		/* byte length of tuple */
 } ItemIdData;
 标记了对应的tuple在页中offset位置，该tuple状态，该tuple长度。
+/*
+ * lp_flags has these possible states.  An UNUSED line pointer is available
+ * for immediate re-use, the other states are not.
+ */
+#define LP_UNUSED		0		/* unused (should always have lp_len=0) */
+#define LP_NORMAL		1		/* used (should always have lp_len>0) */
+#define LP_REDIRECT		2		/* HOT redirect (should have lp_len=0) */
+#define LP_DEAD			3		/* dead, may or may not have storage */
 
 现在我们已经已经知道了表数据文件内部数据结构，不考虑可见性判断mvcc，那么我们可以根据这些内容读出表中所存储的数据内容。
 现实不会这么简单，比如需要考虑可见性判断、一个tuple中字段attr个数、是否含有空行、是否有oid、元组头长度（tuple长度除去实际表
